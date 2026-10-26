@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="rehab_rail_width">184dp</dimen>
+    <dimen name="rehab_count_size">80sp</dimen>
+    <dimen name="rehab_training_title">24sp</dimen>
+</resources>

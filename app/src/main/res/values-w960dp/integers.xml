@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <integer name="rehab_video_weight">72</integer>
+    <integer name="rehab_info_weight">28</integer>
+</resources>

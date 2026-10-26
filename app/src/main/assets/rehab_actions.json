@@ -1,0 +1,92 @@
+[
+  {
+    "key": "rub",
+    "name": "摩擦手背",
+    "cooperation": "双手配合",
+    "counting": "完整往返计一次",
+    "default_target": 10,
+    "steps": [
+      "患侧前臂放稳，健侧手掌覆盖患侧手背。",
+      "健侧手掌沿患侧手背向前摩擦。",
+      "沿原方向返回，完成一次往返。"
+    ],
+    "framing": "双手、患侧手腕和肘部保持在画面内。",
+    "video_url": "/media/rub.mp4",
+    "poster_url": "/media/rub.jpg"
+  },
+  {
+    "key": "fist",
+    "name": "握拳伸展",
+    "cooperation": "双手配合",
+    "counting": "张开、握拳、再张开计一次",
+    "default_target": 10,
+    "steps": [
+      "双手放在镜头前，手指自然张开。",
+      "两手配合缓慢握拳。",
+      "重新伸展手指，回到张开状态。"
+    ],
+    "framing": "双手手掌和手指完整入镜，避免相互遮挡。",
+    "video_url": "/media/fist.mp4",
+    "poster_url": "/media/fist.jpg"
+  },
+  {
+    "key": "stretch",
+    "name": "牵伸手指",
+    "cooperation": "健侧辅助患侧",
+    "counting": "背伸与掌屈分别累计",
+    "default_target": 10,
+    "steps": [
+      "患侧手放稳，健侧手辅助患侧指尖。",
+      "参照示范轻柔推压并保持，避免突然用力。",
+      "缓慢释放并回位；背伸、掌屈分别累计。"
+    ],
+    "framing": "双手和手腕完整入镜，辅助接触位置不要被遮挡。",
+    "video_url": "/media/stretch.mp4",
+    "poster_url": "/media/stretch.jpg"
+  },
+  {
+    "key": "cup",
+    "name": "端放水杯",
+    "cooperation": "患侧完成",
+    "counting": "端起、放下各计一次",
+    "default_target": 10,
+    "steps": [
+      "患侧手持稳轻质水杯，也可按工作人员指导空手练习。",
+      "相对身体缓慢端起，保持手腕可见。",
+      "缓慢放下并回位；端起、放下各记录一次。"
+    ],
+    "framing": "患侧手腕、肘部和躯干入镜；健侧手无需入镜。",
+    "video_url": "/media/cup.mp4",
+    "poster_url": "/media/cup.jpg"
+  },
+  {
+    "key": "abduction",
+    "name": "手指外展",
+    "cooperation": "患侧完成",
+    "counting": "拇指、食指分别累计",
+    "default_target": 10,
+    "steps": [
+      "患侧手掌面向合适角度，保持手部稳定。",
+      "按示范单独伸出拇指或食指。",
+      "收回原位；两类手指的次数分别展示。"
+    ],
+    "framing": "患侧完整手掌及手指入镜；健侧手无需入镜。",
+    "video_url": "/media/abduction.mp4",
+    "poster_url": "/media/abduction.jpg"
+  },
+  {
+    "key": "press",
+    "name": "手指点按",
+    "cooperation": "患侧完成",
+    "counting": "目标 A、B 分别累计",
+    "default_target": 8,
+    "steps": [
+      "患侧手放稳，按示范在目标 A 点按并释放。",
+      "按照当前阶段提示转换到目标 B。",
+      "在目标 B 继续点按、释放，避免整只手上下移动。"
+    ],
+    "framing": "患侧手腕与指尖清晰入镜；健侧手无需入镜。",
+    "video_url": "/media/press.mp4",
+    "poster_url": "/media/press.jpg"
+  }
+]

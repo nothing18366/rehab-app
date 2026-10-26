@@ -1,0 +1,68 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/training_root" android:layout_width="match_parent"
+    android:layout_height="match_parent" android:orientation="vertical" android:padding="24dp"
+    android:background="@color/rehab_background">
+    <TextView android:id="@+id/training_journey" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingBottom="20dp" android:text="01  训练准备    →    02  动作练习    →    03  训练小结    →    04  感受记录"
+        android:textSize="14sp" android:textColor="@color/rehab_muted" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal">
+    <FrameLayout android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="@integer/rehab_video_weight" android:layout_marginEnd="20dp"
+        android:background="@drawable/bg_surface" android:clipToOutline="true">
+        <org.webrtc.SurfaceViewRenderer android:id="@+id/training_local"
+            android:layout_width="match_parent" android:layout_height="match_parent" />
+        <org.webrtc.SurfaceViewRenderer android:id="@+id/training_remote"
+            android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
+        <TextView android:id="@+id/training_camera_status" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:layout_gravity="top|start"
+            android:layout_margin="12dp" android:background="#CC233B38" android:padding="10dp" android:textSize="14sp"
+            android:textColor="#FFFFFF" android:text="正在打开摄像头" />
+        <TextView android:id="@+id/training_framing" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_gravity="bottom"
+            android:background="#DD233B38" android:padding="16dp" android:textSize="16sp"
+            android:textColor="#FFFFFF" />
+    </FrameLayout>
+    <LinearLayout android:id="@+id/training_info" android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="@integer/rehab_info_weight" android:orientation="vertical"
+        android:padding="24dp" android:background="@drawable/bg_surface">
+        <View android:layout_width="match_parent" android:layout_height="3dp" android:background="@color/rehab_primary" android:layout_marginBottom="14dp" />
+        <TextView android:id="@+id/training_title" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:textSize="@dimen/rehab_training_title"
+            android:textStyle="bold" android:textColor="@color/rehab_ink" />
+        <TextView android:id="@+id/training_patient" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:paddingTop="6dp" android:paddingBottom="12dp"
+            android:textSize="14sp" android:textColor="@color/rehab_muted" />
+        <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+            android:fillViewport="true">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical">
+                <TextView android:id="@+id/training_count_label" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="已完成次数 / 本项目标" android:gravity="center" android:textSize="14sp" android:textColor="@color/rehab_muted" />
+                <TextView android:id="@+id/training_count" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="0 / 10"
+                    android:gravity="center" android:fontFamily="sans-serif-medium" android:textSize="@dimen/rehab_count_size" android:textColor="@color/rehab_primary" />
+                <ProgressBar android:id="@+id/training_progress" style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent" android:layout_height="6dp"
+                    android:layout_marginTop="6dp" android:layout_marginBottom="16dp"
+                    android:progressTint="@color/rehab_primary" android:progressBackgroundTint="#E3EADD" />
+                <TextView android:id="@+id/training_passed" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="完成次数 · 合格 0 次"
+                    android:textSize="16sp" android:textColor="@color/rehab_ink" />
+                <TextView android:id="@+id/training_detail" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:paddingTop="8dp" android:textSize="15sp" android:textColor="@color/rehab_muted" />
+            </LinearLayout>
+        </ScrollView>
+        <TextView android:id="@+id/training_phase" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="训练准备" android:paddingTop="6dp"
+            android:textSize="14sp" android:textColor="@color/rehab_muted" />
+        <TextView android:id="@+id/training_hint" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="8dp" android:padding="14dp" android:background="@drawable/bg_mint"
+            android:gravity="center" android:textSize="18sp" android:textColor="@color/rehab_primary" />
+        <TextView android:id="@+id/training_fps" android:layout_width="match_parent"
+            android:layout_height="48dp" android:gravity="center_vertical" android:text="识别 FPS：--"
+            android:contentDescription="识别帧率，点击查看诊断" android:textSize="13sp" android:textColor="@color/rehab_muted" />
+        <LinearLayout android:id="@+id/training_controls" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="vertical" />
+    </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

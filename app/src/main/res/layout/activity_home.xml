@@ -1,0 +1,31 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:id="@+id/rehab_shell" android:orientation="horizontal" android:background="@color/rehab_background">
+    <LinearLayout android:id="@+id/rehab_navigation" android:layout_width="@dimen/rehab_rail_width"
+        android:layout_height="match_parent" android:orientation="vertical"
+        android:padding="18dp" android:background="@color/rehab_forest" />
+    <LinearLayout android:id="@+id/rehab_workspace" android:layout_width="0dp" android:layout_weight="1"
+        android:layout_height="match_parent" android:orientation="vertical">
+        <LinearLayout android:id="@+id/rehab_topbar" android:layout_width="match_parent" android:layout_height="88dp"
+            android:paddingHorizontal="24dp" android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView android:id="@+id/rehab_page_title" android:layout_width="0dp"
+                android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="康复空间 / 今日康复" android:textSize="16sp"
+                android:textColor="@color/rehab_muted" />
+            <TextView android:id="@+id/rehab_date" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:layout_marginEnd="20dp"
+                android:textSize="14sp" android:textColor="@color/rehab_muted" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/rehab_patient_button" android:layout_width="wrap_content"
+                android:layout_height="52dp" android:maxWidth="280dp" android:maxLines="1"
+                android:ellipsize="end" android:text="选择患者" android:textSize="15sp"
+                android:textColor="@color/rehab_primary" android:backgroundTint="#FFFFFF" />
+        </LinearLayout>
+        <TextView android:id="@+id/rehab_notice" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:paddingHorizontal="24dp"
+            android:paddingVertical="5dp" android:maxLines="2" android:ellipsize="end"
+            android:textSize="13sp" android:textColor="@color/rehab_muted" />
+        <FrameLayout android:id="@+id/rehab_content" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" />
+    </LinearLayout>
+</LinearLayout>

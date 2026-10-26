@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="rehab_primary">#245F4B</color>
+    <color name="rehab_forest">#173F35</color>
+    <color name="rehab_ink">#203C32</color>
+    <color name="rehab_muted">#5F7067</color>
+    <color name="rehab_background">#F3F5F1</color>
+</resources>

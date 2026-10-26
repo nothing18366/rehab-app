@@ -1,0 +1,7 @@
+<resources>
+    <item name="login_identity" type="id" />
+    <item name="login_secret" type="id" />
+    <item name="login_email" type="id" />
+    <item name="login_code" type="id" />
+    <item name="login_confirmation" type="id" />
+</resources>

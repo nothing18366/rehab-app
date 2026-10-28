@@ -43,7 +43,7 @@ public class CameraProbeTest {
                     android.app.Activity activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
                             .stream().filter(a -> a.getPackageName().equals("com.robint.sdk.demo")).findFirst().orElseThrow(() -> new AssertionError("No foreground app Activity"));
                     SurfaceViewRenderer local = new SurfaceViewRenderer(activity), remote = new SurfaceViewRenderer(activity);
-                    WebRtcClient rtc = new WebRtcClient(activity, local, remote, new WebRtcClient.Listener() {
+                    WebRtcClient rtc = new WebRtcClient(activity, local, remote, null, new WebRtcClient.Listener() {
                         @Override public void onCameraStatus(String message) {
                             Log.i("RehabCameraProbe", message);
                             if (message.contains("后置") && client.get().isPreviewReady()) ready.countDown();

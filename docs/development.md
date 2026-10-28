@@ -11,6 +11,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 仪器测试位于 app/src/androidTest/java/com/robint/RehabFlowTest.java，连接独立测试服务与临时数据库；不要对正式患者服务执行。支持的参数与测试服务地址以测试代码为准。
 
+`SkeletonOverlayTest` 覆盖 FIT、镜像、竖图、序号、会话、预测手点及超时清除。`TrainingPerformanceTest` 为显式开启的实体机器人采样，需 `benchmarkUrl` 指向独立 18121 端口，可传 `action=rub|fist`、`mode=local|skeleton|diagnostic`、`sampleSeconds=30`。每段预热 15 秒后采样，数据保存在 App 私有 `files/benchmarks/`；正式测试前备份连接配置，完成后恢复。服务端仓库 `tools/benchmark_robot.py` 负责三轮采集，`tools/compare_benchmarks.py` 汇总原始指标。
+
+性能采样必须与真人配合，不能与离线推理或构建同时进行。完整画面延迟需外部拍摄；测试数据中的 RTT 和解码→绘制估计不能代替它。测试结束后的外部强停如导致仪器运行器报告失败，应保留退出信息并单独注明，不能将其记为完整 JUnit 通过。
+
 完整运行 11 项还需提供 `staffToken`、仅含 cup 动作生效计划的 `patientToken`，以及一次性找回夹具 `resetUsername/resetEmail/resetCode`。夹具在临时库中通过认证服务创建，邮件发送使用测试替身；不提供患者或找回夹具时，相应用例会跳过。测试服务需清空 SMTP_* 环境，便于验证未配置邮件的提示。
 
 ```bash

@@ -22,6 +22,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.ImageView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import org.json.JSONArray;
@@ -42,7 +43,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private JSONArray catalog;
     private int itemIndex, requestGeneration;
     private TextView countView, passedView, detailView, phaseView, hintView, fpsView, cameraStatus, framing;
-    private MaterialButton primary, preview, mute;
+    private MaterialButton primary, preview, mute, diagnosticButton;
+    private boolean diagnosticRequested, snapshotPending;
     private LinearLayout controls;
 
     @Override protected void onCreate(Bundle saved) {
@@ -117,7 +119,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         primary = UiComponents.button(this, "开始训练", true, v -> checkAndCountdown()); controls.addView(primary);
         controls.addView(UiComponents.button(this, "返回", false, v -> confirmExit()));
         adaptTrainingLayout();
-        rtc = new WebRtcClient(this, findViewById(R.id.training_local), findViewById(R.id.training_remote), this);
+        rtc = new WebRtcClient(this, findViewById(R.id.training_local), findViewById(R.id.training_remote),
+                findViewById(R.id.training_skeleton), this);
         rtc.selectCamera(false);
         openPreview();
     }
@@ -142,6 +145,14 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             if (!foreground || ticket != requestGeneration || !"preparing".equals(state)) return;
             if (error != null) { preparationError(error); return; }
             JSONObject health = (JSONObject) data;
+            JSONObject capabilities = health.optJSONObject("capabilities");
+            if (capabilities == null || !capabilities.optBoolean("local_skeleton_v1") || !capabilities.optBoolean("clock_sync_v1")) {
+                preparationError("服务端尚不支持本地骨架画面，请联系工作人员升级服务端"); return;
+            }
+            if (SessionStore.staff(this) && getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("next_remote_diagnostic", false)
+                    && (!capabilities.optBoolean("diagnostic_video") || !capabilities.optBoolean("diagnostic_png"))) {
+                preparationError("服务端尚不支持远端诊断，请升级服务端或关闭下一次诊断开关"); return;
+            }
             if (!health.optBoolean("model_loaded")) { preparationError("模型尚未就绪，请联系工作人员检查服务"); return; }
             if (health.optBoolean("busy")) { preparationError("另一个设备正在训练，请稍后重试"); return; }
             state = "countdown";
@@ -172,7 +183,9 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             if (error != null) { if (foreground && ticket == requestGeneration) onError(error); return; }
             sessionId = ((JSONObject) data).optString("id");
             if (!foreground || ticket != requestGeneration || !"connecting".equals(state)) { interruptRecord(); return; }
-            rtc.start(api.base(), RehabApiClient.object("session_id", sessionId));
+            diagnosticRequested = SessionStore.staff(this) && getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("next_remote_diagnostic", false);
+            rtc.start(api.base(), RehabApiClient.object("session_id", sessionId,
+                    "preview_mode", diagnosticRequested ? "diagnostic" : "keypoints"));
             handler.postDelayed(() -> {
                 if (foreground && "connecting".equals(state) && ticket == requestGeneration) onError("视频连接超时，请检查网络后重新开始");
             }, 20000);
@@ -182,7 +195,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private void liveControls() {
         controls.removeAllViews();
         LinearLayout switches = UiComponents.row(this);
-        preview = UiComponents.button(this, "识别画面", false, v -> rtc.togglePreview());
+        preview = UiComponents.button(this, "本地画面", false, v -> rtc.togglePreview());
         mute = UiComponents.button(this, voice ? "静音" : "开启语音", false, v -> {
             voice = !voice;
             getSharedPreferences("rehab", MODE_PRIVATE).edit().putBoolean("voice", voice).apply();
@@ -193,6 +206,12 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             button.setLayoutParams(new LinearLayout.LayoutParams(0, UiComponents.dp(this, 56), 1)); switches.addView(button);
         }
         controls.addView(switches);
+        diagnosticButton = null;
+        if (diagnosticRequested && SessionStore.staff(this)) {
+            diagnosticButton = UiComponents.button(this, "工作人员诊断", false, v -> showRemoteDiagnostic());
+            controls.addView(diagnosticButton);
+        }
+        onPreviewChanged(rtc.isSkeletonEnabled(), rtc.hasDiagnosticVideo());
         primary = UiComponents.button(this, "结束本项", true, v -> finishItem());
         primary.setBackgroundTintList(ColorStateList.valueOf(UiComponents.DANGER)); controls.addView(primary);
         MaterialButton safe = UiComponents.button(this, "因不适结束", false, v -> {
@@ -277,6 +296,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         if (!foreground || (data.has("session_id") && !sessionId.equals(data.optString("session_id")))) return;
         String type = data.optString("type");
         if ("started".equals(type) && "connecting".equals(state)) {
+            if ("diagnostic".equals(data.optString("preview_mode")))
+                getSharedPreferences("rehab", MODE_PRIVATE).edit().remove("next_remote_diagnostic").apply();
             state = "training"; updateJourney(1); phaseView.setText("训练中"); liveControls();
             hintView.setText("请按示范开始，保持动作自然、平稳");
             lastResultAt = SystemClock.elapsedRealtime(); handler.postDelayed(watchResults, 1000);
@@ -490,12 +511,42 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         }
     }
     @Override public void onCameraSelected(boolean front, boolean switching) { }
-    @Override public void onPreviewChanged(boolean remote, boolean available) {
-        if (preview != null) { preview.setEnabled(available); preview.setText(remote ? "本地画面" : "识别画面"); }
-        if (cameraStatus != null) cameraStatus.setText(remote ? "服务端识别画面" : available ? "本地画面 · 远端识别中" : "本地摄像头预览");
+    @Override public void onPreviewChanged(boolean skeleton, boolean diagnosticAvailable) {
+        if (preview != null) {
+            preview.setEnabled(true); preview.setText(skeleton ? "本地画面" : "骨架画面");
+            preview.setContentDescription(skeleton ? "切换到本地画面，隐藏骨架" : "切换到骨架画面");
+        }
+        if (diagnosticButton != null) {
+            diagnosticButton.setEnabled(diagnosticAvailable);
+            diagnosticButton.setText(rtc != null && rtc.showingDiagnostic() ? "诊断中 · 返回训练画面" : "工作人员诊断");
+        }
+        if (cameraStatus != null) cameraStatus.setText(rtc != null && rtc.showingDiagnostic()
+                ? "工作人员远端诊断" : skeleton ? "本地视频与骨架" : "本地视频");
     }
     @Override public void onStats(String message) { diagnostics = message; }
     private void showDiagnostics() { new AlertDialog.Builder(this).setTitle("实时诊断").setMessage(diagnostics).setPositiveButton("关闭", null).show(); }
+
+    private void showRemoteDiagnostic() {
+        if (!SessionStore.staff(this) || rtc == null || !rtc.hasDiagnosticVideo()) return;
+        new AlertDialog.Builder(this).setTitle("工作人员诊断")
+            .setMessage("远端画面为服务端解码后的原图，回传仍有压缩。无损 PNG 可用于检查上传失真；查看方式不改变训练计数。")
+            .setPositiveButton(rtc.showingDiagnostic() ? "返回训练画面" : "查看远端画面", (d, w) -> rtc.toggleDiagnostic())
+            .setNeutralButton("抓取无损 PNG", (d, w) -> {
+                if (snapshotPending || rtc == null) return;
+                snapshotPending = true;
+                rtc.diagnosticFrame((data, error) -> {
+                    snapshotPending = false;
+                    if (!foreground || isFinishing()) { if (data instanceof android.graphics.Bitmap) ((android.graphics.Bitmap) data).recycle(); return; }
+                    if (error != null) { new AlertDialog.Builder(this).setMessage(error).setPositiveButton("关闭", null).show(); return; }
+                    android.graphics.Bitmap bitmap = (android.graphics.Bitmap) data;
+                    ImageView image = new ImageView(this); image.setImageBitmap(bitmap); image.setAdjustViewBounds(true);
+                    image.setContentDescription("当前诊断会话服务端解码后的无损抓帧");
+                    AlertDialog dialog = new AlertDialog.Builder(this).setTitle("服务端原图 · 无损 PNG").setView(image).setPositiveButton("关闭", null).create();
+                    dialog.setOnDismissListener(closed -> image.setImageDrawable(null));
+                    dialog.show();
+                });
+            }).setNegativeButton("关闭", null).show();
+    }
     @Override public void onError(String message) {
         if (!foreground) return;
         if ("result".equals(state) || "rest".equals(state) || "overview".equals(state) || "interrupted".equals(state)) return;
@@ -512,6 +563,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private void closeCamera() {
+        snapshotPending = false;
         if (rtc != null) { WebRtcClient old = rtc; rtc = null; old.close(); }
         getSharedPreferences("rehab", MODE_PRIVATE).edit().putString("last_diagnostics", diagnostics).apply();
     }

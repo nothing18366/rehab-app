@@ -1297,6 +1297,8 @@ public class HomeActivity extends AppCompatActivity {
         }
         LinearLayout device = UiComponents.card(this);
         device.addView(UiComponents.heading(this, "设备与语音"));
+        if (SessionStore.staff(this)) settingSwitch(device, "下一次训练开启远端诊断",
+                "仅下一次连接生效。日常训练显示本地视频与骨架；远端诊断会增加视频回传开销。", "next_remote_diagnostic", false);
         CheckBox voice = new CheckBox(this); voice.setText("播报关键提示与训练结束"); voice.setTextSize(18);
         voice.setChecked(preferences.getBoolean("voice", true));
         voice.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean("voice", checked).apply()); device.addView(voice);

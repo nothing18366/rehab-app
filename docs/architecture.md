@@ -14,7 +14,10 @@ com.robint/
     remote/RehabApiClient.java
     local/SessionStore.java
     local/TeachingMediaCache.java
-  rtc/WebRtcClient.java
+  rtc/
+    WebRtcClient.java
+    SkeletonOverlayView.java
+    PerformanceStats.java
   media/Subtitles.java
   ui/component/
     UiComponents.java
@@ -27,6 +30,8 @@ package 使用全小写；类和 Java 文件 UpperCamelCase，方法/字段 lowe
 布局按用途命名 activity_home/activity_login/activity_training，配置限定版本保持相同文件名；资源名使用 snake_case，背景 drawable 使用 bg_ 前缀。教学内置图片位于 assets/teaching_images，服务端目录缓存保持原存储格式。
 
 HTTP 请求、凭证和素材缓存分别负责网络、认证状态与校验缓存；RTC 管理摄像头、预览和连接资源。Activity 保留现有流程与生命周期行为，本次不引入新的 MVVM 框架或改变训练时序。
+
+`WebRtcClient` 日常只上传视频，可靠 `rehab` 通道承载业务结果与结束确认，独立无序、零重传 `pose` 通道承载关键点。`SkeletonOverlayView` 复用 Canvas 画笔和坐标缓冲，以与本地视频相同的 FIT/镜像变换绘制，校验会话、序号、坐标和 300 ms 时效。`PerformanceStats` 按实际时间统计区间帧率、编码、流量与丢包；骨架绘制 CPU 和解码到绘制估计单独统计。诊断模式才协商回传视频，PNG 通过当前会话的授权 HTTP 接口按需读取。
 
 页面、RTC 连接和后端动作阶段是不同状态，后续修改应维持边界。应用 applicationId、签名、SharedPreferences 名称/字段、Keystore 别名、接口字段和教学缓存键保持兼容。Activity 类名变更时同步 Manifest、显式 Intent 和仪器测试。
 

@@ -199,8 +199,8 @@ public class RehabFlowTest {
             onView(withId(R.id.training_phase)).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
             onView(withText("因不适结束")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
             screenshot("training_local");
-            onView(withText("识别画面")).perform(click()); SystemClock.sleep(1000); screenshot("training_remote");
-            onView(withText("本地画面")).perform(click()); onView(withText("结束本项")).perform(click());
+            onView(withText("本地画面")).perform(click()); SystemClock.sleep(1000); screenshot("training_local_only");
+            onView(withText("骨架画面")).perform(click()); onView(withText("结束本项")).perform(click());
             waitText("本项训练结果"); screenshot("result"); clickText("休息并准备下一项");
             waitText("休息一下"); screenshot("rest"); clickText("跳过休息，进入准备");
             waitText("开始训练"); waitCameraReady();

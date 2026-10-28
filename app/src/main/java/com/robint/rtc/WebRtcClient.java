@@ -7,6 +7,8 @@ import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Build;
+import android.os.SystemClock;
+import android.graphics.BitmapFactory;
 import android.view.View;
 
 import org.json.JSONException;
@@ -65,7 +67,7 @@ public final class WebRtcClient {
         void onMessage(JSONObject message);
         void onError(String message);
         void onStats(String message);
-        void onPreviewChanged(boolean remote, boolean available);
+        void onPreviewChanged(boolean skeleton, boolean diagnosticAvailable);
         void onCameraSelected(boolean front, boolean switching);
     }
 
@@ -82,6 +84,7 @@ public final class WebRtcClient {
     private final Listener listener;
     private final SurfaceViewRenderer localView;
     private final SurfaceViewRenderer remoteView;
+    private final SkeletonOverlayView skeletonView;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -97,6 +100,7 @@ public final class WebRtcClient {
     private volatile VideoTrack remoteTrack;
     private PeerConnection peer;
     private DataChannel dataChannel;
+    private DataChannel poseChannel;
     private String serverUrl;
     private JSONObject training;
     private boolean previewRunning;
@@ -108,6 +112,9 @@ public final class WebRtcClient {
     private boolean switchingCamera;
     private volatile boolean stopping;
     private boolean preferRemote;
+    private boolean skeletonEnabled = true, diagnostic;
+    private volatile long clockRequestedAt, clockSyncedAt;
+    private volatile double clockOffset = Double.NaN, clockRtt = Double.NaN;
     private volatile boolean showingRemote;
     private boolean offerSent;
     private volatile boolean destroyed;
@@ -130,6 +137,7 @@ public final class WebRtcClient {
         public void run() {
             PeerConnection current = peer;
             if (current == null || stopping) return;
+            if (SystemClock.elapsedRealtime() - clockRequestedAt >= 5000) sendClockPing();
             int captureFps = capturedFrames.getAndSet(0);
             int receiveFps = receivedFrames.getAndSet(0);
             int generation = sessionGeneration;
@@ -141,10 +149,11 @@ public final class WebRtcClient {
     };
 
     public WebRtcClient(Activity activity, SurfaceViewRenderer localView,
-                   SurfaceViewRenderer remoteView, Listener listener) {
+                   SurfaceViewRenderer remoteView, SkeletonOverlayView skeletonView, Listener listener) {
         this.activity = activity;
         this.localView = localView;
         this.remoteView = remoteView;
+        this.skeletonView = skeletonView;
         this.listener = listener;
         robotSoftwareCodec = Build.MODEL.toLowerCase().contains("rk3588")
                 || Build.HARDWARE.toLowerCase().contains("rk3588");
@@ -322,6 +331,15 @@ public final class WebRtcClient {
         closeSession();
         this.serverUrl = url;
         this.training = training;
+        diagnostic = "diagnostic".equals(training.optString("preview_mode"));
+        skeletonEnabled = true;
+        clockOffset = clockRtt = Double.NaN;
+        clockRequestedAt = clockSyncedAt = 0;
+        if (skeletonView != null) {
+            skeletonView.setSession(training.optString("session_id"));
+            skeletonView.setMirror(DISPLAY_MIRROR);
+            skeletonView.setVisibility(View.VISIBLE);
+        }
         stopping = false;
         final int generation = sessionGeneration;
         preferRemote = false;
@@ -388,7 +406,8 @@ public final class WebRtcClient {
         // reliably. Use software VP8 on that device; phones keep H.264.
         RtpTransceiver videoTransceiver = peer.addTransceiver(localTrack,
                 new RtpTransceiver.RtpTransceiverInit(
-                        RtpTransceiver.RtpTransceiverDirection.SEND_RECV,
+                        diagnostic ? RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+                                : RtpTransceiver.RtpTransceiverDirection.SEND_ONLY,
                         Collections.singletonList("rehab")));
         java.util.ArrayList<RtpCapabilities.CodecCapability> preferred = new java.util.ArrayList<>();
         for (RtpCapabilities.CodecCapability codec : factory
@@ -405,7 +424,9 @@ public final class WebRtcClient {
         dataChannel = peer.createDataChannel("rehab", new DataChannel.Init());
         dataChannel.registerObserver(new DataChannel.Observer() {
             @Override public void onBufferedAmountChange(long amount) { }
-            @Override public void onStateChange() { }
+            @Override public void onStateChange() {
+                activity.runOnUiThread(() -> { if (generation == sessionGeneration) sendClockPing(); });
+            }
 
             @Override
             public void onMessage(DataChannel.Buffer buffer) {
@@ -414,6 +435,19 @@ public final class WebRtcClient {
                 buffer.data.get(bytes);
                 try {
                     JSONObject message = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+                    if (!thisSession(message)) return;
+                    if ("clock_pong".equals(message.optString("type"))) {
+                        long now = SystemClock.elapsedRealtime();
+                        double echoed = message.optDouble("client_ms"), server = message.optDouble("server_ms");
+                        double roundTrip = now - echoed;
+                        if (echoed == clockRequestedAt && roundTrip >= 0 && roundTrip <= 500
+                                && !Double.isNaN(server) && !Double.isInfinite(server) && (Double.isNaN(clockRtt) || roundTrip <= clockRtt || now - clockSyncedAt > 30000)) {
+                            clockOffset = server - (echoed + now) / 2;
+                            clockRtt = roundTrip;
+                            clockSyncedAt = now;
+                        }
+                        return;
+                    }
                     if ("result".equals(message.optString("type"))) {
                         processedFps = message.optDouble("processed_fps");
                         serverMs = message.optDouble("server_total_ms");
@@ -431,6 +465,31 @@ public final class WebRtcClient {
                 } catch (JSONException e) {
                     activity.runOnUiThread(() -> { if (generation == sessionGeneration) fail("服务端消息格式错误"); });
                 }
+            }
+        });
+        DataChannel.Init poseInit = new DataChannel.Init();
+        poseInit.ordered = false;
+        poseInit.maxRetransmits = 0;
+        poseChannel = peer.createDataChannel("pose", poseInit);
+        poseChannel.registerObserver(new DataChannel.Observer() {
+            @Override public void onBufferedAmountChange(long amount) { }
+            @Override public void onStateChange() { }
+            @Override public void onMessage(DataChannel.Buffer buffer) {
+                if (generation != sessionGeneration || stopping || skeletonView == null || buffer.binary) return;
+                long receivedAt = SystemClock.elapsedRealtime();
+                if (buffer.data.remaining() > 16384) return;
+                byte[] bytes = new byte[buffer.data.remaining()];
+                buffer.data.get(bytes);
+                try {
+                    JSONObject message = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+                    if (!thisSession(message) || !"pose".equals(message.optString("type"))) return;
+                    double decoded = message.optDouble("decoded_at_ms");
+                    double age = Double.isNaN(decoded) || Double.isInfinite(decoded) || Double.isNaN(clockOffset)
+                            || receivedAt - clockSyncedAt > 60000 ? Double.NaN : receivedAt + clockOffset - decoded;
+                    activity.runOnUiThread(() -> {
+                        if (generation == sessionGeneration && !stopping) skeletonView.accept(message, receivedAt, age);
+                    });
+                } catch (JSONException ignored) { /* Invalid pose updates expire; reliable control stays usable. */ }
             }
         });
         peer.createOffer(new SimpleSdpObserver() {
@@ -553,7 +612,17 @@ public final class WebRtcClient {
     }
 
     public void togglePreview() {
-        if (remoteTrack == null || stopping) return;
+        if (stopping) return;
+        skeletonEnabled = !skeletonEnabled;
+        preferRemote = false;
+        updatePreview();
+    }
+
+    public boolean isSkeletonEnabled() { return skeletonEnabled; }
+    public boolean hasDiagnosticVideo() { return diagnostic && remoteTrack != null && !stopping; }
+    public boolean showingDiagnostic() { return showingRemote; }
+    public void toggleDiagnostic() {
+        if (!hasDiagnosticVideo()) return;
         preferRemote = !preferRemote;
         updatePreview();
     }
@@ -561,11 +630,50 @@ public final class WebRtcClient {
     private void updatePreview() {
         localView.setMirror(DISPLAY_MIRROR);
         remoteView.setMirror(DISPLAY_MIRROR);
-        boolean available = remoteTrack != null && !stopping;
+        boolean available = hasDiagnosticVideo();
         showingRemote = available && preferRemote;
         remoteView.setVisibility(showingRemote ? View.VISIBLE : View.GONE);
         localView.setVisibility(showingRemote ? View.GONE : View.VISIBLE);
-        listener.onPreviewChanged(showingRemote, available);
+        if (skeletonView != null) skeletonView.setVisibility(!showingRemote && skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
+        listener.onPreviewChanged(skeletonEnabled, available);
+    }
+
+    private boolean thisSession(JSONObject message) {
+        return training != null && training.optString("session_id").equals(message.optString("session_id"));
+    }
+
+    private void sendClockPing() {
+        DataChannel channel = dataChannel;
+        if (channel == null || channel.state() != DataChannel.State.OPEN || stopping) return;
+        clockRequestedAt = SystemClock.elapsedRealtime();
+        byte[] bytes = RehabApiClient.object("type", "clock_ping", "client_ms", clockRequestedAt).toString().getBytes(StandardCharsets.UTF_8);
+        channel.send(new DataChannel.Buffer(ByteBuffer.wrap(bytes), false));
+    }
+
+    public void diagnosticFrame(RehabApiClient.Result callback) {
+        if (!hasDiagnosticVideo() || !SessionStore.staff(activity)) { callback.done(null, "本次训练未开启远端诊断"); return; }
+        final int generation = sessionGeneration;
+        Request request = new Request.Builder().url(serverUrl + "/rtc/sessions/" + training.optString("session_id") + "/frame.png")
+                .header("Authorization", "Bearer " + SessionStore.token(activity)).build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException error) {
+                if (!call.isCanceled()) activity.runOnUiThread(() -> {
+                    if (generation == sessionGeneration) callback.done(null, "抓帧失败，请检查连接");
+                });
+            }
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                android.graphics.Bitmap bitmap = null;
+                try (Response incoming = response) {
+                    if (incoming.isSuccessful() && incoming.body() != null)
+                        bitmap = BitmapFactory.decodeStream(incoming.body().byteStream());
+                }
+                android.graphics.Bitmap result = bitmap;
+                activity.runOnUiThread(() -> {
+                    if (generation == sessionGeneration) callback.done(result, result == null ? "抓帧不可用，请确认工作人员身份与诊断会话" : null);
+                    else if (result != null) result.recycle();
+                });
+            }
+        });
     }
 
     public void stopTraining() {
@@ -603,8 +711,9 @@ public final class WebRtcClient {
                     .put("requested_fps", CAPTURE_FPS).put("capture_width", captureWidth)
                     .put("capture_height", captureHeight).put("capture_rotation", captureRotation)
                     .put("return_width", remoteWidth).put("return_height", remoteHeight);
+            sample.put("return_enabled", diagnostic)
+                    .put("clock_rtt_ms", Double.isNaN(clockRtt) || SystemClock.elapsedRealtime() - clockSyncedAt > 60000 ? JSONObject.NULL : clockRtt);
         } catch (JSONException e) { throw new IllegalStateException(e); }
-        performanceSample = sample;
         double rttMs = 0;
         double encodeMs = 0;
         long lost = 0;
@@ -632,10 +741,24 @@ public final class WebRtcClient {
         long finalLost = lost;
         activity.runOnUiThread(() -> {
             if (peer == null || stopping) return;
+            if (skeletonView != null) {
+                try { sample.put("skeleton", skeletonView.takePerformance()); }
+                catch (JSONException e) { throw new IllegalStateException(e); }
+            }
+            performanceSample = sample;
+            JSONObject overlay = sample.optJSONObject("skeleton");
+            org.json.JSONArray ages = overlay == null ? null : overlay.optJSONArray("decoded_to_draw_ms");
+            org.json.JSONArray cpu = overlay == null ? null : overlay.optJSONArray("draw_cpu_ms");
+            double age = ages == null ? Double.NaN : ages.optDouble(ages.length() - 1);
+            double drawCpu = cpu == null ? Double.NaN : cpu.optDouble(cpu.length() - 1);
             listener.onStats(String.format(
-                    "采集 %d  服务端 %.1f  回传 %d FPS\n处理 %.0f  编码 %.0f  RTT %.0f ms\n跳帧 %d/%d  丢包 %d  远端 %d×%d",
-                    captureFps, processedFps, receiveFps, serverMs, finalEncodeMs,
-                    finalRttMs, droppedInput, droppedOutput, finalLost, remoteWidth, remoteHeight));
+                    "采集 %.1f  服务端 %.1f  回传 %s\n处理 %.0f  上传编码 %.0f（区间 %.0f）  RTT %.0f ms\n跳帧 %d/%d  丢包 %d  采集 %d×%d\n最近解码→绘制 %s ms；绘制 CPU %s ms\n时钟误差约 ±%s ms；不含采集和上传",
+                    sample.optDouble("capture_fps"), processedFps, diagnostic ? String.format("%.1f FPS", sample.optDouble("return_fps")) : "未启用",
+                    serverMs, finalEncodeMs, sample.optDouble("encode_interval_ms"), finalRttMs,
+                    droppedInput, droppedOutput, finalLost, captureWidth, captureHeight,
+                    Double.isNaN(age) ? "--" : String.format("%.0f", age),
+                    Double.isNaN(drawCpu) ? "--" : String.format("%.2f", drawCpu),
+                    sample.isNull("clock_rtt_ms") ? "--" : String.format("%.0f", clockRtt / 2)));
         });
     }
 
@@ -651,15 +774,21 @@ public final class WebRtcClient {
         http.dispatcher().cancelAll();
         mainHandler.removeCallbacks(statsTimer);
         DataChannel oldChannel = dataChannel;
+        DataChannel oldPoseChannel = poseChannel;
         PeerConnection oldPeer = peer;
         dataChannel = null;
+        poseChannel = null;
         peer = null;
         remoteTrack = null;
+        if (skeletonView != null) skeletonView.setSession("");
         if (!destroyed) {
             updatePreview();
             remoteView.clearImage();
         }
         CLEANUP_EXECUTOR.execute(() -> {
+            if (oldPoseChannel != null) {
+                oldPoseChannel.unregisterObserver(); oldPoseChannel.close(); oldPoseChannel.dispose();
+            }
             if (oldChannel != null) {
                 oldChannel.unregisterObserver();
                 oldChannel.close();

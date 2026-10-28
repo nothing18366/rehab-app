@@ -37,7 +37,8 @@ public final class SessionStore {
             .putString("auth_base", prefs(c).getString("server_url", ""))
             .putString("auth_role", login.getString("role"))
             .putString("auth_patient", login.optString("patient_id", ""))
-            .putLong("auth_expires", (long) (login.optDouble("expires", 0) * 1000)).remove("patient_id").commit();
+            .putLong("auth_expires", (long) (login.optDouble("expires", 0) * 1000)).remove("patient_id")
+            .remove("next_remote_diagnostic").commit();
     }
     public static synchronized String token(Context c) {
         SharedPreferences p = prefs(c);
@@ -53,7 +54,7 @@ public final class SessionStore {
     public static boolean staff(Context c) { return "staff".equals(prefs(c).getString("auth_role", "")); }
     public static void clear(Context c) {
         prefs(c).edit().remove("auth_token").remove("auth_role").remove("auth_patient").remove("auth_expires")
-            .remove("auth_base").remove("patient_id").remove("active_run").apply();
+            .remove("auth_base").remove("patient_id").remove("active_run").remove("next_remote_diagnostic").apply();
     }
     public static void login(Context c) {
         clear(c);

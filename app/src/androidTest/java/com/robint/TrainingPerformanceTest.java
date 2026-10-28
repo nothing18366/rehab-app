@@ -24,6 +24,9 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import okhttp3.*;
 import static org.junit.Assert.*;
@@ -84,6 +87,7 @@ public class TrainingPerformanceTest {
             JSONObject login = (JSONObject) request("POST", "/api/v1/auth/staff-login", RehabApiClient.object("username", "admin", "password", "123"));
             token = login.getString("token");
             SessionStore.save(context, login);
+            preferences.edit().putBoolean("next_remote_diagnostic", "diagnostic".equals(mode)).commit();
             JSONObject patient = (JSONObject) request("POST", "/api/v1/patients", RehabApiClient.object("name", "性能测试志愿者", "affected_side", "right", "forearm_cm", 25));
             JSONObject run = (JSONObject) request("POST", "/api/v1/training-runs", RehabApiClient.object("patient_id", patient.getString("id"), "mode", "single", "action", action, "target_reps", 99));
             String runId = run.getString("id");
@@ -94,8 +98,30 @@ public class TrainingPerformanceTest {
                 waitFor(scenario, a -> field(a, "rtc") != null && ((WebRtcClient) field(a, "rtc")).isPreviewReady());
                 scenario.onActivity(a -> invoke(a, "checkAndCountdown"));
                 waitFor(scenario, a -> "training".equals(field(a, "state")));
-                if ("remote".equals(mode)) {
+                scenario.onActivity(a -> {
+                    WebRtcClient rtc = (WebRtcClient) field(a, "rtc");
+                    Object peer = field(rtc, "peer"); Object identity = field(a, "sessionId");
+                    Object result = field(a, "lastResult");
+                    rtc.togglePreview(); rtc.togglePreview();
+                    assertSame(peer, field(rtc, "peer")); assertEquals(identity, field(a, "sessionId"));
+                    assertSame(result, field(a, "lastResult")); assertEquals("training", field(a, "state"));
+                });
+                if ("diagnostic".equals(mode)) {
                     waitFor(scenario, a -> field(field(a, "rtc"), "remoteTrack") != null);
+                    scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).toggleDiagnostic());
+                    waitFor(scenario, a -> ((WebRtcClient) field(a, "rtc")).performanceSample().optInt("return_width") > 0);
+                    assertFalse(preferences.getBoolean("next_remote_diagnostic", false));
+                    CountDownLatch snapshot = new CountDownLatch(1);
+                    AtomicReference<Object> image = new AtomicReference<>();
+                    scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).diagnosticFrame((data, error) -> {
+                        image.set(error == null ? data : error); snapshot.countDown();
+                    }));
+                    assertTrue(snapshot.await(10, TimeUnit.SECONDS));
+                    assertTrue(String.valueOf(image.get()), image.get() instanceof android.graphics.Bitmap);
+                    assertEquals(640, ((android.graphics.Bitmap) image.get()).getWidth());
+                    assertEquals(480, ((android.graphics.Bitmap) image.get()).getHeight());
+                    ((android.graphics.Bitmap) image.get()).recycle();
+                } else if ("local".equals(mode)) {
                     scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).togglePreview());
                 }
                 File directory = new File(context.getFilesDir(), "benchmarks");
@@ -107,6 +133,7 @@ public class TrainingPerformanceTest {
                         JSONObject[] sample = new JSONObject[1];
                         scenario.onActivity(a -> {
                             assertEquals("training", field(a, "state"));
+                            if (!"diagnostic".equals(mode)) assertNull(field(field(a, "rtc"), "remoteTrack"));
                             try { sample[0] = new JSONObject(((WebRtcClient) field(a, "rtc")).performanceSample().toString()); }
                             catch (Exception e) { throw new AssertionError(e); }
                         });

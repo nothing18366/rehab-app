@@ -122,6 +122,7 @@ public final class WebRtcClient {
     private final AtomicInteger receivedFrames = new AtomicInteger();
     private volatile double processedFps;
     private volatile double serverMs;
+    private volatile JSONObject recognitionStats = new JSONObject();
     private volatile int droppedInput;
     private volatile int droppedOutput;
     private volatile int remoteWidth;
@@ -346,6 +347,7 @@ public final class WebRtcClient {
         offerSent = false;
         processedFps = 0;
         serverMs = 0;
+        recognitionStats = new JSONObject();
         droppedInput = 0;
         droppedOutput = 0;
         remoteWidth = 0;
@@ -449,6 +451,7 @@ public final class WebRtcClient {
                         return;
                     }
                     if ("result".equals(message.optString("type"))) {
+                        recognitionStats = message;
                         processedFps = message.optDouble("processed_fps");
                         serverMs = message.optDouble("server_total_ms");
                         droppedInput = message.optInt("dropped_input");
@@ -713,6 +716,12 @@ public final class WebRtcClient {
                     .put("return_width", remoteWidth).put("return_height", remoteHeight);
             sample.put("return_enabled", diagnostic)
                     .put("clock_rtt_ms", Double.isNaN(clockRtt) || SystemClock.elapsedRealtime() - clockSyncedAt > 60000 ? JSONObject.NULL : clockRtt);
+            JSONObject recognition = recognitionStats;
+            for (String key : new String[]{"body_fps", "left_hand_fps", "right_hand_fps",
+                    "body_updates_total", "left_hand_updates_total", "right_hand_updates_total",
+                    "pose_inferred", "pose_inference_ms", "hand_detection_ms", "tracking_ms"}) {
+                sample.put(key, recognition.opt(key));
+            }
         } catch (JSONException e) { throw new IllegalStateException(e); }
         double rttMs = 0;
         double encodeMs = 0;
@@ -751,6 +760,12 @@ public final class WebRtcClient {
             org.json.JSONArray cpu = overlay == null ? null : overlay.optJSONArray("draw_cpu_ms");
             double age = ages == null ? Double.NaN : ages.optDouble(ages.length() - 1);
             double drawCpu = cpu == null ? Double.NaN : cpu.optDouble(cpu.length() - 1);
+            String recognition = sample.has("body_fps") ? String.format(
+                    "人体新检测 %.1f / 左手 %.1f / 右手 %.1f 次/秒\n最近帧：人体 %.1f%s / 手部检测 %.1f / 跟踪平滑 %.1f ms",
+                    sample.optDouble("body_fps"), sample.optDouble("left_hand_fps"), sample.optDouble("right_hand_fps"),
+                    sample.optDouble("pose_inference_ms"), sample.optBoolean("pose_inferred") ? "" : "（复用）",
+                    sample.optDouble("hand_detection_ms"), sample.optDouble("tracking_ms"))
+                    : "关键点更新与分段耗时：服务端未提供";
             listener.onStats(String.format(
                     "采集 %.1f  服务端 %.1f  回传 %s\n处理 %.0f  上传编码 %.0f（区间 %.0f）  RTT %.0f ms\n跳帧 %d/%d  丢包 %d  采集 %d×%d\n最近解码→绘制 %s ms；绘制 CPU %s ms\n时钟误差约 ±%s ms；不含采集和上传",
                     sample.optDouble("capture_fps"), processedFps, diagnostic ? String.format("%.1f FPS", sample.optDouble("return_fps")) : "未启用",
@@ -758,7 +773,7 @@ public final class WebRtcClient {
                     droppedInput, droppedOutput, finalLost, captureWidth, captureHeight,
                     Double.isNaN(age) ? "--" : String.format("%.0f", age),
                     Double.isNaN(drawCpu) ? "--" : String.format("%.2f", drawCpu),
-                    sample.isNull("clock_rtt_ms") ? "--" : String.format("%.0f", clockRtt / 2)));
+                    sample.isNull("clock_rtt_ms") ? "--" : String.format("%.0f", clockRtt / 2)) + "\n" + recognition);
         });
     }
 

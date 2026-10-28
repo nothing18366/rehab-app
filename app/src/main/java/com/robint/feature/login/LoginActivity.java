@@ -118,9 +118,7 @@ public class LoginActivity extends AppCompatActivity {
         MaterialButton connection = link(compact ? "连接服务" : "康复训练站 · 连接服务", v -> serverDialog());
         connection.setTag("login_server"); connection.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         top.addView(connection, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(link("使用帮助", v -> new AlertDialog.Builder(this).setTitle("使用帮助")
-            .setMessage("请先设置训练服务地址。患者账号与初始密码由管理员分配；忘记密码可用绑定邮箱重置，或联系工作人员协助。\n训练中如感到不适，请立即结束并联系工作人员。")
-            .setPositiveButton("知道了", null).show())); panel.addView(top);
+        top.addView(link("使用帮助", v -> showInformation(false))); panel.addView(top);
         LinearLayout center = UiComponents.column(this); center.setGravity(Gravity.CENTER);
         LinearLayout form = UiComponents.column(this);
         LinearLayout.LayoutParams formSize = new LinearLayout.LayoutParams(-1, -2);
@@ -188,10 +186,65 @@ public class LoginActivity extends AppCompatActivity {
         }
         if (!getSharedPreferences("rehab", 0).getString("action_catalog_" + api.base(), "").isEmpty())
             form.addView(link("离线查看已缓存教学", v -> startActivity(new Intent(this, HomeActivity.class).putExtra("offline_teaching", true))));
-        MaterialButton privacy = link("隐私与使用告知 · 训练辅助工具，不替代专业指导", v -> new AlertDialog.Builder(this).setTitle("隐私与使用告知")
-            .setMessage("登录信息与训练数据保存在机构服务端。识别画面经局域网传输，本项目不保存摄像头视频。请使用本人账号，离开共享设备时退出登录。算法反馈不代表临床疗效结论。")
-            .setPositiveButton("知道了", null).show()); privacy.setTextSize(11); panel.addView(privacy);
+        MaterialButton privacy = link("隐私与使用告知 · 训练辅助工具，不替代专业指导", v -> showInformation(true)); privacy.setTextSize(11); panel.addView(privacy);
         countdown();
+    }
+
+    private void showInformation(boolean privacy) {
+        String title = privacy ? "隐私与使用告知" : "使用帮助";
+        String[][] sections = privacy ? new String[][]{
+            {"数据保存与传输", "登录信息与训练数据保存在机构服务端。识别画面经局域网传输，本项目不保存摄像头视频。"},
+            {"保护自己的账号", "请使用本人账号，离开共享设备时退出登录。"},
+            {"训练辅助，不替代专业指导", "算法反馈不代表临床疗效结论。"}
+        } : new String[][]{
+            {"先连接训练服务", "请先设置训练服务地址。"},
+            {"使用管理员分配的账号", "患者账号与初始密码由管理员分配；忘记密码可用绑定邮箱重置，或联系工作人员协助。"},
+            {"感到不适时，立即结束", "训练中如感到不适，请立即结束并联系工作人员。"}
+        };
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        dialog.setTitle(title);
+        LinearLayout body = UiComponents.column(this);
+        int padding = UiComponents.dp(this, 24);
+        body.setPadding(padding, padding, padding, padding);
+        body.setBackground(UiComponents.background(this, Color.WHITE, 24));
+        androidx.core.view.ViewCompat.setAccessibilityPaneTitle(body, title);
+        LinearLayout header = UiComponents.row(this);
+        TextView mark = UiComponents.text(this, "", 20, UiComponents.PRIMARY);
+        icon(mark, privacy ? "shield" : "file", 26, UiComponents.PRIMARY);
+        mark.setCompoundDrawablePadding(0); mark.setGravity(Gravity.CENTER);
+        mark.setPadding(UiComponents.dp(this, 11), 0, 0, 0);
+        mark.setBackground(UiComponents.background(this, UiComponents.MINT, 14));
+        mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        header.addView(mark, new LinearLayout.LayoutParams(UiComponents.dp(this, 48), UiComponents.dp(this, 48)));
+        LinearLayout heading = UiComponents.column(this); heading.setPadding(UiComponents.dp(this, 16), 0, 0, 0);
+        TextView label = UiComponents.heading(this, title); label.setTextSize(26); heading.addView(label);
+        heading.addView(UiComponents.text(this, privacy ? "了解数据使用，安心开始训练" : "开始训练前，请先了解这些事项", 14, UiComponents.MUTED));
+        header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1)); body.addView(header);
+        LinearLayout content = UiComponents.column(this);
+        content.setPadding(0, UiComponents.dp(this, 20), 0, UiComponents.dp(this, 8));
+        for (int i = 0; i < sections.length; i++) {
+            LinearLayout section = UiComponents.column(this);
+            int inset = UiComponents.dp(this, 16);
+            section.setPadding(inset, inset, inset, inset);
+            if (i == sections.length - 1) section.setBackground(UiComponents.background(this, UiComponents.MINT, 16));
+            TextView name = UiComponents.heading(this, sections[i][0]); name.setTextSize(18); section.addView(name);
+            TextView copy = UiComponents.text(this, sections[i][1], 16, UiComponents.MUTED);
+            copy.setPadding(0, UiComponents.dp(this, 8), 0, 0); section.addView(copy);
+            content.addView(section);
+            if (i == 0) UiComponents.divider(this, content);
+        }
+        body.addView(UiComponents.scroll(this, content), new LinearLayout.LayoutParams(-1, 0, 1));
+        body.addView(UiComponents.button(this, "知道了", true, v -> dialog.dismiss()));
+        dialog.setContentView(body);
+        android.view.Window window = dialog.getWindow();
+        window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        window.setDimAmount(.4f);
+        dialog.show();
+        android.util.DisplayMetrics screen = getResources().getDisplayMetrics();
+        window.setLayout(Math.min(UiComponents.dp(this, 640), screen.widthPixels - UiComponents.dp(this, 48)),
+            Math.min(UiComponents.dp(this, 560), screen.heightPixels - UiComponents.dp(this, 48)));
+        UiComponents.immersive(this);
     }
 
     private void message(String text) { message(text, UiComponents.DANGER); }

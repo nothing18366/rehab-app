@@ -59,6 +59,16 @@ public class RehabFlowTest {
     }
 
     private void waitText(String text) { waitFor(withText(text), 25000); }
+    private void waitCameraReady() {
+        long end = SystemClock.elapsedRealtime() + 15000;
+        while (SystemClock.elapsedRealtime() < end) {
+            try {
+                onView(withId(R.id.training_camera_status)).check(androidx.test.espresso.assertion.ViewAssertions.matches(withText(containsString("已就绪"))));
+                return;
+            } catch (AssertionError | RuntimeException ignored) { SystemClock.sleep(250); }
+        }
+        onView(withId(R.id.training_camera_status)).check(androidx.test.espresso.assertion.ViewAssertions.matches(withText(containsString("已就绪"))));
+    }
     private void waitFor(org.hamcrest.Matcher<View> matcher, int timeout) {
         long end = SystemClock.elapsedRealtime() + timeout;
         while (SystemClock.elapsedRealtime() < end) {
@@ -180,7 +190,7 @@ public class RehabFlowTest {
             onView(withTagValue(is("训练"))).perform(click()); waitText("开始今日训练"); clickText("开始今日训练");
             waitText("训练前感受"); screenshot("pre_feedback"); clickText("跳过本页");
             waitText("开始训练");
-            waitFor(allOf(withId(R.id.training_camera_status), withText(containsString("已就绪"))), 15000);
+            waitCameraReady();
             screenshot("preparation");
             onView(withText("开始训练")).perform(click()); waitText("结束本项");
             waitFor(allOf(withId(R.id.training_fps), withText(startsWith("识别 FPS：")), not(withText(containsString("--")))), 15000);
@@ -193,15 +203,15 @@ public class RehabFlowTest {
             onView(withText("本地画面")).perform(click()); onView(withText("结束本项")).perform(click());
             waitText("本项训练结果"); screenshot("result"); clickText("休息并准备下一项");
             waitText("休息一下"); screenshot("rest"); clickText("跳过休息，进入准备");
-            waitText("开始训练"); waitFor(allOf(withId(R.id.training_camera_status), withText(containsString("已就绪"))), 15000);
+            waitText("开始训练"); waitCameraReady();
             onView(withText("开始训练")).perform(click()); waitText("结束本项");
             SystemClock.sleep(1500); onView(withText("结束本项")).perform(click()); waitText("本项训练结果");
             clickText("填写训练后感受"); waitText("训练后感受"); clickText("跳过本页"); waitText("本次训练汇总"); screenshot("overview"); clickText("返回训练记录");
             waitText("训练详情"); screenshot("history");
-            clickText("返回训练记录"); clickText("查看训练趋势  →");
+            clickText("返回训练记录"); onView(allOf(withText("训练趋势"), isAssignableFrom(com.google.android.material.button.MaterialButton.class))).perform(scrollTo(), click());
             onView(withContentDescription("趋势动作")).perform(click());
             androidx.test.espresso.Espresso.onData(allOf(is(instanceOf(String.class)), is("端放水杯"))).perform(click());
-            clickText("查询趋势"); waitFor(withText(containsString("条件组 1")), 15000); screenshot("trends");
+            clickText("查询趋势"); waitFor(withText("比较组 1"), 15000); screenshot("trends");
         }
         JSONArray patients = (JSONArray) api("GET", "/patients?q=" + name, null);
         assertEquals(1, patients.length());
@@ -220,7 +230,7 @@ public class RehabFlowTest {
         try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class)) {
             onView(withTagValue(is("训练"))).perform(click()); waitText("开始今日训练"); clickText("开始今日训练");
             waitText("训练前感受"); clickText("跳过本页");
-            waitText("开始训练"); waitFor(allOf(withId(R.id.training_camera_status), withText(containsString("已就绪"))), 15000);
+            waitText("开始训练"); waitCameraReady();
             onView(withText("开始训练")).perform(click()); waitText("结束本项"); SystemClock.sleep(1500);
             shell("input keyevent KEYCODE_HOME");
             SystemClock.sleep(2500);
@@ -354,7 +364,7 @@ public class RehabFlowTest {
             onView(withText("进入训练准备")).check(androidx.test.espresso.assertion.ViewAssertions.matches(not(isEnabled())));
             onView(withTagValue(is("训练"))).perform(click()); waitText("开始今日训练"); clickText("开始今日训练");
             waitText("训练前感受"); clickText("跳过本页"); waitText("开始训练");
-            waitFor(allOf(withId(R.id.training_camera_status), withText(containsString("已就绪"))), 15000);
+            waitCameraReady();
             onView(withText("开始训练")).perform(click()); waitText("因不适结束"); SystemClock.sleep(1500);
             onView(withText("因不适结束")).perform(click()); waitText("训练后感受"); screenshot("post_feedback"); clickText("跳过本页");
             waitText("本次训练汇总"); screenshot("discomfort_summary");

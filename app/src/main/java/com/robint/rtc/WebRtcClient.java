@@ -6,6 +6,7 @@ import com.robint.data.remote.RehabApiClient;
 import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Build;
 import android.view.View;
 
 import org.json.JSONException;
@@ -19,15 +20,18 @@ import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.MediaConstraints;
 import org.webrtc.MediaStream;
+import org.webrtc.MediaStreamTrack;
 import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnectionFactory;
 import org.webrtc.RTCStats;
 import org.webrtc.RTCStatsReport;
 import org.webrtc.RendererCommon;
+import org.webrtc.RtpCapabilities;
 import org.webrtc.RtpReceiver;
 import org.webrtc.RtpTransceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
+import org.webrtc.SoftwareVideoEncoderFactory;
 import org.webrtc.SurfaceTextureHelper;
 import org.webrtc.SurfaceViewRenderer;
 import org.webrtc.VideoSource;
@@ -37,7 +41,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -83,6 +89,7 @@ public final class WebRtcClient {
             .build();
     private final EglBase eglBase;
     private final PeerConnectionFactory factory;
+    private final boolean robotSoftwareCodec;
     private final SurfaceTextureHelper textureHelper;
     private CameraVideoCapturer capturer;
     private VideoSource videoSource;
@@ -94,6 +101,7 @@ public final class WebRtcClient {
     private JSONObject training;
     private boolean previewRunning;
     private boolean cameraReady;
+    private boolean cameraFailed;
     private int previewGeneration;
     private volatile int sessionGeneration;
     private boolean frontCamera = true;
@@ -130,6 +138,8 @@ public final class WebRtcClient {
         this.localView = localView;
         this.remoteView = remoteView;
         this.listener = listener;
+        robotSoftwareCodec = Build.MODEL.toLowerCase().contains("rk3588")
+                || Build.HARDWARE.toLowerCase().contains("rk3588");
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions
                 .builder(activity.getApplicationContext()).createInitializationOptions());
         eglBase = EglBase.create();
@@ -141,8 +151,9 @@ public final class WebRtcClient {
         remoteView.setMirror(DISPLAY_MIRROR);
         remoteView.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
         factory = PeerConnectionFactory.builder()
-                .setVideoEncoderFactory(new DefaultVideoEncoderFactory(
-                        eglBase.getEglBaseContext(), true, true))
+                .setVideoEncoderFactory(robotSoftwareCodec
+                        ? new SoftwareVideoEncoderFactory()
+                        : new DefaultVideoEncoderFactory(eglBase.getEglBaseContext(), true, true))
                 .setVideoDecoderFactory(new DefaultVideoDecoderFactory(eglBase.getEglBaseContext()))
                 .createPeerConnectionFactory();
         textureHelper = SurfaceTextureHelper.create("rehab-camera", eglBase.getEglBaseContext());
@@ -152,6 +163,7 @@ public final class WebRtcClient {
         if (previewRunning || destroyed) return;
         final int cameraGeneration = ++previewGeneration;
         cameraReady = false;
+        cameraFailed = false;
         Camera2Enumerator cameras = new Camera2Enumerator(activity);
         for (String name : cameras.getDeviceNames()) {
             if (frontCamera ? cameras.isFrontFacing(name) : cameras.isBackFacing(name)) {
@@ -161,18 +173,31 @@ public final class WebRtcClient {
                         activity.runOnUiThread(() -> {
                             if (cameraGeneration != previewGeneration) return;
                             cameraReady = true;
+                            cameraFailed = false;
                             listener.onCameraStatus((frontCamera ? "前置" : "后置") + "摄像头已就绪");
                         });
                     }
                     @Override public void onCameraClosed() { }
                     @Override public void onCameraError(String error) {
-                        activity.runOnUiThread(() -> { if (cameraGeneration == previewGeneration) listener.onError("摄像头错误：" + error); });
+                        activity.runOnUiThread(() -> {
+                            if (cameraGeneration != previewGeneration) return;
+                            cameraReady = false; cameraFailed = true;
+                            listener.onError("摄像头错误：" + error);
+                        });
                     }
                     @Override public void onCameraDisconnected() {
-                        activity.runOnUiThread(() -> { if (cameraGeneration == previewGeneration) listener.onError("摄像头已断开"); });
+                        activity.runOnUiThread(() -> {
+                            if (cameraGeneration != previewGeneration) return;
+                            cameraReady = false; cameraFailed = true;
+                            listener.onError("摄像头已断开");
+                        });
                     }
                     @Override public void onCameraFreezed(String error) {
-                        activity.runOnUiThread(() -> { if (cameraGeneration == previewGeneration) listener.onError("摄像头画面已停止：" + error); });
+                        activity.runOnUiThread(() -> {
+                            if (cameraGeneration != previewGeneration) return;
+                            cameraReady = false; cameraFailed = true;
+                            listener.onError("摄像头画面已停止：" + error);
+                        });
                     }
                 });
                 break;
@@ -218,6 +243,13 @@ public final class WebRtcClient {
             listener.onCameraSelected(frontCamera, false);
             return;
         }
+        if (cameraFailed) {
+            // Failed Camera2 sessions cannot use WebRTC's in-session switch operation.
+            stopPreview();
+            frontCamera = front;
+            startPreview();
+            return;
+        }
         switchingCamera = true;
         cameraReady = false;
         listener.onCameraSelected(frontCamera, true);
@@ -242,7 +274,8 @@ public final class WebRtcClient {
                 activity.runOnUiThread(() -> {
                     if (capturer != switchingCapturer) return;
                     switchingCamera = false;
-                    cameraReady = true;
+                    cameraReady = false;
+                    cameraFailed = true;
                     listener.onCameraSelected(frontCamera, false);
                     listener.onCameraStatus("切换摄像头失败：" + error);
                 });
@@ -339,7 +372,24 @@ public final class WebRtcClient {
             return;
         }
         peer.setBitrate(300_000, VIDEO_START_BITRATE, VIDEO_MAX_BITRATE);
-        peer.addTrack(localTrack, Collections.singletonList("rehab"));
+        // The RK3588 hardware codecs emit packets that aiortc cannot decode
+        // reliably. Use software VP8 on that device; phones keep H.264.
+        RtpTransceiver videoTransceiver = peer.addTransceiver(localTrack,
+                new RtpTransceiver.RtpTransceiverInit(
+                        RtpTransceiver.RtpTransceiverDirection.SEND_RECV,
+                        Collections.singletonList("rehab")));
+        java.util.ArrayList<RtpCapabilities.CodecCapability> preferred = new java.util.ArrayList<>();
+        for (RtpCapabilities.CodecCapability codec : factory
+                .getRtpSenderCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO).codecs) {
+            if (robotSoftwareCodec ? "video/VP8".equalsIgnoreCase(codec.mimeType)
+                    : "video/H264".equalsIgnoreCase(codec.mimeType)) preferred.add(codec);
+        }
+        if (preferred.isEmpty()) {
+            listener.onError(robotSoftwareCodec ? "设备没有可用的软件 VP8 编码器" : "设备没有可用的 H.264 编码器");
+            closeSession();
+            return;
+        }
+        videoTransceiver.setCodecPreferences(preferred);
         dataChannel = peer.createDataChannel("rehab", new DataChannel.Init());
         dataChannel.registerObserver(new DataChannel.Observer() {
             @Override public void onBufferedAmountChange(long amount) { }
@@ -396,7 +446,8 @@ public final class WebRtcClient {
         try {
             JSONObject offer = new JSONObject(training.toString())
                     .put("type", "offer")
-                    .put("sdp", current.getLocalDescription().description);
+                    .put("sdp", robotSoftwareCodec ? current.getLocalDescription().description
+                            : h264OnlySdp(current.getLocalDescription().description));
             Request request = new Request.Builder().url(serverUrl + "/rtc/offer")
                     .header("Authorization", "Bearer " + SessionStore.token(activity))
                     .post(RequestBody.create(MediaType.parse("application/json"),
@@ -434,6 +485,43 @@ public final class WebRtcClient {
         } catch (JSONException e) {
             activity.runOnUiThread(() -> fail("训练信息格式错误"));
         }
+    }
+
+    /** Remove robot-incompatible VP8/VP9/AV1 payloads from the offer. */
+    private static String h264OnlySdp(String sdp) {
+        String[] lines = sdp.split("\\r\\n", -1);
+        Set<String> remove = new HashSet<>();
+        for (String line : lines) {
+            if (!line.startsWith("a=rtpmap:")) continue;
+            String[] parts = line.substring(9).split(" ", 2);
+            if (parts.length == 2 && (parts[1].startsWith("VP8/") || parts[1].startsWith("VP9/")
+                    || parts[1].startsWith("AV1/"))) remove.add(parts[0]);
+        }
+        for (String line : lines) {
+            if (!line.startsWith("a=fmtp:") || !line.contains("apt=")) continue;
+            for (String pt : new HashSet<>(remove)) if (line.matches("a=fmtp:[0-9]+ .*apt=" + pt + "(?:;.*)?")) {
+                remove.add(line.substring(7, line.indexOf(' ', 7)));
+                break;
+            }
+        }
+        StringBuilder out = new StringBuilder(sdp.length());
+        for (String line : lines) {
+            if (line.startsWith("m=video ")) {
+                String[] p = line.split(" ");
+                StringBuilder m = new StringBuilder();
+                for (int i = 0; i < p.length; i++) {
+                    if (i < 3 || !remove.contains(p[i])) m.append(i == 0 ? "" : " ").append(p[i]);
+                }
+                line = m.toString();
+            } else if (line.startsWith("a=rtpmap:") || line.startsWith("a=fmtp:") || line.startsWith("a=rtcp-fb:")) {
+                int colon = line.indexOf(':');
+                int end = line.indexOf(' ', colon + 1);
+                String pt = line.substring(colon + 1, end < 0 ? line.length() : end);
+                if (remove.contains(pt)) continue;
+            }
+            out.append(line).append("\r\n");
+        }
+        return out.toString();
     }
 
     private void attachRemote(VideoTrack track, int generation) {

@@ -42,7 +42,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private JSONArray catalog;
     private int itemIndex, requestGeneration;
     private TextView countView, passedView, detailView, phaseView, hintView, fpsView, cameraStatus, framing;
-    private MaterialButton primary, camera, preview, mute;
+    private MaterialButton primary, preview, mute;
     private LinearLayout controls;
 
     @Override protected void onCreate(Bundle saved) {
@@ -114,16 +114,11 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         hintView.setText("确认患者、患侧与入镜范围后，点击开始。" + teaching.optString("cooperation"));
         fpsView.setOnClickListener(v -> showDiagnostics());
         controls = findViewById(R.id.training_controls);
-        camera = UiComponents.button(this, "切换摄像头", false, v -> {
-            boolean front = !getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("front_camera", true);
-            rtc.selectCamera(front);
-            openPreview();
-        }); controls.addView(camera);
         primary = UiComponents.button(this, "开始训练", true, v -> checkAndCountdown()); controls.addView(primary);
         controls.addView(UiComponents.button(this, "返回", false, v -> confirmExit()));
         adaptTrainingLayout();
         rtc = new WebRtcClient(this, findViewById(R.id.training_local), findViewById(R.id.training_remote), this);
-        rtc.selectCamera(getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("front_camera", true));
+        rtc.selectCamera(false);
         openPreview();
     }
 
@@ -140,7 +135,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private void checkAndCountdown() {
         if (!"preparing".equals(state)) return;
         if (rtc == null || !rtc.isPreviewReady()) { hintView.setText("摄像头尚未就绪，请确认权限并等待画面出现"); return; }
-        primary.setEnabled(false); camera.setEnabled(false);
+        primary.setEnabled(false);
         hintView.setText("正在检查服务与模型…");
         int ticket = ++requestGeneration;
         api.get("/health", (data, error) -> {
@@ -155,19 +150,22 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private void preparationError(String message) {
-        state = "preparing"; primary.setEnabled(true); camera.setEnabled(true); hintView.setText(message);
+        state = "preparing"; primary.setEnabled(true); hintView.setText(message);
     }
 
     private void countdown(int seconds) {
         if (!foreground || !"countdown".equals(state)) return;
         if (seconds == 0) { connectSession(); return; }
-        primary.setText(String.valueOf(seconds));
-        hintView.setText(seconds + " 秒后开始，请保持入镜");
+        findViewById(R.id.training_info).setVisibility(View.GONE);
+        findViewById(R.id.training_countdown).setVisibility(View.VISIBLE);
+        ((TextView) findViewById(R.id.training_countdown_number)).setText(String.valueOf(seconds));
         handler.postDelayed(() -> countdown(seconds - 1), 1000);
     }
 
     private void connectSession() {
         state = "connecting";
+        findViewById(R.id.training_countdown).setVisibility(View.GONE);
+        findViewById(R.id.training_info).setVisibility(View.VISIBLE);
         primary.setText("正在连接"); hintView.setText("正在建立视频连接…");
         int ticket = ++requestGeneration;
         api.post("/api/v1/sessions", RehabApiClient.object("run_id", runId, "item_index", itemIndex), (data, error) -> {
@@ -406,7 +404,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         UiComponents.tip(this, body, "慢一点，也很好", "放松肩膀和双手。这是建议休息时间，准备好后点击继续。");
         JSONObject next = run.optJSONArray("items").optJSONObject(itemIndex);
         body.addView(UiComponents.text(this, "下一项：" + teaching(next.optString("action")).optString("name") + " · " + next.optInt("target_reps") + " 次", 24, UiComponents.INK));
-        TextView timer = UiComponents.heading(this, "30 秒"); timer.setTextSize(54); timer.setGravity(android.view.Gravity.CENTER);
+        TextView timer = UiComponents.heading(this, "30 秒"); timer.setTextSize(104); timer.setGravity(android.view.Gravity.CENTER);
+        timer.setMinHeight(UiComponents.dp(this, getResources().getConfiguration().screenHeightDp >= 600 ? 280 : 180));
         timer.setBackground(UiComponents.background(this, UiComponents.MINT, 24)); timer.setPadding(20, UiComponents.dp(this, 32), 20, UiComponents.dp(this, 32)); body.addView(timer);
         MaterialButton nextButton = UiComponents.button(this, "跳过休息，进入准备", true, v -> prepareItem()); body.addView(nextButton);
         body.addView(UiComponents.button(this, "结束本次计划", false, v -> endRun()));
@@ -485,15 +484,12 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
 
     @Override public void onCameraStatus(String message) {
         if (cameraStatus != null && foreground) cameraStatus.setText(message);
-        if ("preparing".equals(state) && primary != null && message.contains("已就绪")) primary.setEnabled(true);
-    }
-    @Override public void onCameraSelected(boolean front, boolean switching) {
-        if (camera != null) {
-            camera.setText((front ? "前置" : "后置") + " · 切换摄像头");
-            camera.setEnabled(!switching && "preparing".equals(state));
+        if ("preparing".equals(state) && primary != null && message.contains("已就绪")) {
+            primary.setEnabled(true);
+            hintView.setText("确认患者、患侧与入镜范围后，点击开始。" + teaching.optString("cooperation"));
         }
-        if (!switching) getSharedPreferences("rehab", MODE_PRIVATE).edit().putBoolean("front_camera", front).apply();
     }
+    @Override public void onCameraSelected(boolean front, boolean switching) { }
     @Override public void onPreviewChanged(boolean remote, boolean available) {
         if (preview != null) { preview.setEnabled(available); preview.setText(remote ? "本地画面" : "识别画面"); }
         if (cameraStatus != null) cameraStatus.setText(remote ? "服务端识别画面" : available ? "本地画面 · 远端识别中" : "本地摄像头预览");

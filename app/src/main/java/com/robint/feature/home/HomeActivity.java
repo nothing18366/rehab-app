@@ -5,7 +5,7 @@ import com.robint.data.local.SessionStore;
 import com.robint.data.local.TeachingMediaCache;
 import com.robint.data.remote.RehabApiClient;
 import com.robint.feature.feedback.FeedbackActivity;
-import com.robint.feature.records.TrendsActivity;
+import com.robint.feature.records.TrendsView;
 import com.robint.feature.training.TrainingActivity;
 import com.robint.media.Subtitles;
 import com.robint.ui.component.IconDrawable;
@@ -27,7 +27,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.MediaController;
+import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
 import android.widget.TextView;
@@ -58,6 +58,9 @@ public class HomeActivity extends AppCompatActivity {
     private String page = "训练";
     private int generation;
     private int historyDays = 7, historyOffset;
+    private boolean historyTrends;
+    private Bundle trendFilters = new Bundle();
+    private String trendPatient = "";
     private int patientSearchGeneration;
     private boolean foreground;
     private boolean creatingRun;
@@ -631,11 +634,7 @@ public class HomeActivity extends AppCompatActivity {
             names.addView(UiComponents.badge(this, cooperation, false));
             TextView counting = UiComponents.text(this, item.optString("counting"), 14, UiComponents.MUTED); counting.setMinHeight(UiComponents.dp(this, 44)); copy.addView(counting);
             copy.addView(UiComponents.text(this, "cup".equals(item.optString("key")) ? "器材：轻质水杯 / 按指导空手" : "按教学要求准备器材与摆位", 13, UiComponents.MUTED));
-            LinearLayout foot = UiComponents.row(this); copy.addView(foot);
-            String version = item.optString("content_version", "待同步");
-            TextView versionView = UiComponents.text(this, "教学 · " + (version.length() > 8 ? version.substring(0, 8) : version), 12, UiComponents.MUTED);
-            versionView.setMaxLines(1); versionView.setEllipsize(android.text.TextUtils.TruncateAt.END); versionView.setContentDescription("教学版本 " + version);
-            foot.addView(versionView, new LinearLayout.LayoutParams(0, -2, 1));
+            LinearLayout foot = UiComponents.row(this); foot.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); copy.addView(foot);
             MaterialButton teachingButton = UiComponents.compact(this, "查看教学  →", false, v -> showTeaching(item));
             teachingButton.setTag("teach:" + item.optString("key")); foot.addView(teachingButton);
             row.addView(card);
@@ -682,14 +681,46 @@ public class HomeActivity extends AppCompatActivity {
         });
         TextView state = UiComponents.text(this, "正在读取示范视频…", 14, UiComponents.MUTED);
         demo.addView(state);
-        MediaController controller = new MediaController(this);
-        controller.setAnchorView(player);
-        player.setMediaController(controller);
+        LinearLayout timeline = UiComponents.row(this);
+        TextView elapsed = UiComponents.text(this, "00:00", 14, UiComponents.MUTED);
+        TextView duration = UiComponents.text(this, "00:00", 14, UiComponents.MUTED);
+        elapsed.setMinWidth(UiComponents.dp(this, 48)); duration.setMinWidth(UiComponents.dp(this, 48));
+        duration.setGravity(Gravity.END);
+        SeekBar progress = new SeekBar(this);
+        progress.setContentDescription("示范视频播放进度"); progress.setEnabled(false);
+        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(UiComponents.PRIMARY));
+        progress.setThumbTintList(android.content.res.ColorStateList.valueOf(UiComponents.PRIMARY));
+        progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(UiComponents.MINT));
+        timeline.addView(elapsed);
+        timeline.addView(progress, new LinearLayout.LayoutParams(0, UiComponents.dp(this, 48), 1));
+        timeline.addView(duration); demo.addView(timeline);
+        LinearLayout playback = UiComponents.row(this);
+        MaterialButton play = UiComponents.compact(this, "播放示范", false, v -> {
+            if (player.isPlaying()) player.pause();
+            else { if (player.getCurrentPosition() >= player.getDuration()) player.seekTo(0); player.start(); }
+        });
+        MaterialButton replay = UiComponents.compact(this, "重播示范", false, v -> { player.seekTo(0); player.start(); });
+        play.setEnabled(false); replay.setEnabled(false);
+        playback.addView(play); playback.addView(replay); demo.addView(playback);
+        final boolean[] seeking = {false};
+        progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onStartTrackingTouch(SeekBar bar) { seeking[0] = true; }
+            @Override public void onProgressChanged(SeekBar bar, int position, boolean fromUser) {
+                if (fromUser) elapsed.setText(playbackTime(position));
+            }
+            @Override public void onStopTrackingTouch(SeekBar bar) {
+                player.seekTo(bar.getProgress()); seeking[0] = false;
+            }
+        });
         player.setOnPreparedListener(mp -> {
             mp.setLooping(false); player.seekTo(1);
-            subtitleHandler.postDelayed(() -> { if (video == player && !player.isPlaying()) controller.hide(); }, 200);
+            progress.setMax(player.getDuration()); duration.setText(playbackTime(player.getDuration()));
+            progress.setEnabled(true); play.setEnabled(true); replay.setEnabled(true);
         });
-        player.setOnErrorListener((mp, what, extra) -> { state.setText("设备无法播放此视频，请检查素材或系统解码器"); return true; });
+        player.setOnErrorListener((mp, what, extra) -> {
+            progress.setEnabled(false); play.setEnabled(false); replay.setEnabled(false);
+            state.setVisibility(View.VISIBLE); state.setText("设备无法播放此视频，请检查素材或系统解码器"); return true;
+        });
         media.video(api.base(), item, (cached, error) -> {
             if (ticket != generation || !foreground || video != player) return;
             if (cached == null) { state.setText(error); return; }
@@ -697,26 +728,26 @@ public class HomeActivity extends AppCompatActivity {
                 showTeaching(cached.item); notice.setText("新版下载失败，已保留并展示旧版本教学。请联网后重新进入动作库同步。"); return;
             }
             player.setVideoURI(Uri.fromFile(cached.video));
-            state.setText((error == null ? "已缓存 · " : error + "\n") + "版本 " + cached.item.optString("content_version") + "\n最后同步 " +
-                new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new Date(cached.synced)) + " · 点击播放，可重播");
+            state.setText(error);
+            state.setVisibility(error == null ? View.GONE : View.VISIBLE);
             Subtitles captions = Subtitles.read(cached.subtitle);
             subtitleHandler.post(new Runnable() {
                 @Override public void run() {
                     if (ticket != generation || video != player || !foreground) return;
-                    subtitle.setText(captions.at(player.getCurrentPosition())); subtitleHandler.postDelayed(this, 150);
+                    int position = player.getCurrentPosition();
+                    if (!seeking[0]) {
+                        progress.setProgress(position);
+                        String time = playbackTime(position);
+                        if (!time.contentEquals(elapsed.getText())) elapsed.setText(time);
+                    }
+                    String label = player.isPlaying() ? "暂停示范" : "播放示范";
+                    if (!label.contentEquals(play.getText())) play.setText(label);
+                    String caption = captions.at(position);
+                    if (!caption.contentEquals(subtitle.getText())) subtitle.setText(caption);
+                    subtitleHandler.postDelayed(this, 150);
                 }
             });
-        }, text -> { if (ticket == generation && video == player) state.setText(text); });
-        CheckBox captions = new CheckBox(this); captions.setText("显示中文字幕"); captions.setTextSize(16); captions.setChecked(true);
-        captions.setOnCheckedChangeListener((b, checked) -> subtitle.setVisibility(checked ? View.VISIBLE : View.GONE)); demo.addView(captions);
-        demo.addView(UiComponents.button(this, "重播示范", false, v -> { player.seekTo(0); player.start(); }));
-        JSONObject review = item.optJSONObject("review");
-        String reviewState = review == null ? "pending" : review.optString("state");
-        demo.addView(UiComponents.text(this, "内容版本 " + item.optString("content_version", "待同步") + " · 更新 " + localTime(item.optString("updated_at")) +
-            "\n审核：" + ("approved".equals(reviewState) ? "已审核" : "rejected".equals(reviewState) ? "需修订" : "待审核") +
-            (review == null || review.isNull("reviewer") ? "" : " · " + review.optString("reviewer") + " · " + localTime(review.optString("reviewed_at"))) +
-            (review == null ? "" : "\n" + review.optString("note", "")), 14, UiComponents.MUTED));
-        if (!offlineTeaching && SessionStore.staff(this)) demo.addView(UiComponents.button(this, "管理本版本审核信息", false, v -> reviewTeaching(item)));
+        }, text -> { if (ticket == generation && video == player) state.setText("正在准备示范视频…"); });
         LinearLayout instructions = UiComponents.card(this);
         instructions.addView(UiComponents.heading(this, "分步动作指导"));
         instructions.addView(UiComponents.badge(this, item.optString("cooperation"), false));
@@ -756,27 +787,9 @@ public class HomeActivity extends AppCompatActivity {
         body.addView(UiComponents.compact(this, "返回动作库", false, v -> navigate("动作库")));
     }
 
-    private void reviewTeaching(JSONObject item) {
-        if (offlineTeaching || !SessionStore.staff(this)) return;
-        LinearLayout form = UiComponents.column(this); form.setPadding(24, 8, 24, 8);
-        Spinner state = new Spinner(this); state.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"待审核", "已审核", "需修订"}));
-        JSONObject review = item.optJSONObject("review");
-        state.setSelection(review != null && "approved".equals(review.optString("state")) ? 1 : review != null && "rejected".equals(review.optString("state")) ? 2 : 0); form.addView(state);
-        EditText reviewer = input("审核人", review == null || review.isNull("reviewer") ? "" : review.optString("reviewer"), false); form.addView(reviewer);
-        EditText note = input("审核备注（最多 500 字）", review == null ? "" : review.optString("note", ""), false); form.addView(note);
-        TextView errorView = UiComponents.text(this, "审核仅关联当前版本，素材更新后自动回到待审核。", 18, UiComponents.MUTED); form.addView(errorView);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("教学内容审核").setView(UiComponents.scroll(this, form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
-        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
-            api.request("PATCH", "/api/v1/actions/" + item.optString("key") + "/review", RehabApiClient.object("content_version", item.optString("content_version"),
-                "state", new String[]{"pending", "approved", "rejected"}[state.getSelectedItemPosition()], "reviewer", reviewer.getText().toString(), "note", note.getText().toString()), (data, error) -> {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
-                if (error != null) { errorView.setText(error); return; }
-                JSONObject updated = (JSONObject) data;
-                try { for (int i = 0; i < actions.length(); i++) if (item.optString("key").equals(actions.optJSONObject(i).optString("key"))) actions.put(i, updated); } catch (Exception ignored) {}
-                preferences.edit().putString("action_catalog_" + api.base(), actions.toString()).apply(); dialog.dismiss(); showTeaching(updated);
-            });
-        })); dialog.show();
+    private static String playbackTime(int milliseconds) {
+        int seconds = Math.max(0, milliseconds) / 1000;
+        return String.format(Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60);
     }
 
     private void createRun(String mode, String key, int target) {
@@ -1059,7 +1072,14 @@ public class HomeActivity extends AppCompatActivity {
     private void showHistory() {
         LinearLayout body = begin("训练记录");
         if (patient == null && needPatient(body)) return;
-        body.addView(UiComponents.compact(this, "查看训练趋势  →", false, v -> startActivity(new Intent(this, TrendsActivity.class).putExtra("patient_id", patient.optString("id")).putExtra("catalog", actions.toString()))));
+        LinearLayout tabs = UiComponents.row(this); body.addView(tabs);
+        tabs.addView(UiComponents.compact(this, "训练记录", !historyTrends, v -> { historyTrends = false; showHistory(); }));
+        tabs.addView(UiComponents.compact(this, "训练趋势", historyTrends, v -> { historyTrends = true; showHistory(); }));
+        if (historyTrends) {
+            if (!trendPatient.equals(patient.optString("id"))) { trendPatient = patient.optString("id"); trendFilters = new Bundle(); }
+            body.addView(new TrendsView(this, trendPatient, actions, trendFilters, this::showRun));
+            return;
+        }
         LinearLayout filters = UiComponents.row(this);
         for (int days : new int[]{7, 30, 0}) {
             MaterialButton button = UiComponents.button(this, days == 0 ? "全部" : "近 " + days + " 天", days == historyDays,
@@ -1219,7 +1239,6 @@ public class HomeActivity extends AppCompatActivity {
         reading.addView(UiComponents.heading(this, "阅读与提示")); menu.addView(UiComponents.heading(this, "使用与设备"));
         UiComponents.split(this, body, reading, menu, .58f);
         settingSwitch(reading, "训练语音提示", "播报开始、关键纠正、达到目标与结束，不逐次报数。", "voice", true);
-        settingSwitch(reading, "默认前置摄像头", "进入准备页后仍可切换前后摄像头。", "front_camera", true);
         reading.addView(UiComponents.text(this, "字号与显示对比度跟随设备系统的辅助功能设置。", 15, UiComponents.MUTED));
         reading.addView(UiComponents.button(this, "系统显示与辅助功能", false, v -> {
             try { startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)); }
@@ -1236,7 +1255,7 @@ public class HomeActivity extends AppCompatActivity {
             menu.addView(UiComponents.button(this, "患者管理", false, v -> navigate("患者管理")));
         }
         menu.addView(UiComponents.heading(this, "关于复健"));
-        menu.addView(UiComponents.text(this, "术后康复辅助 · 机构局域网试用\n机器人 16:9 横屏 / 手机横屏\n" + (SessionStore.staff(this) ? "当前身份：工作人员" : "当前身份：患者 · 仅本人数据"), 15, UiComponents.MUTED));
+        menu.addView(UiComponents.text(this, SessionStore.staff(this) ? "当前身份：工作人员" : "当前身份：患者 · 仅本人数据", 15, UiComponents.MUTED));
         menu.addView(UiComponents.button(this, "退出登录", false, v -> SessionStore.logout(this)));
         UiComponents.tip(this, body, "按自己的节奏，循序练习", "主观反馈不自动调整训练强度。动作是否适合当前恢复阶段，请与工作人员确认。");
     }
@@ -1278,9 +1297,6 @@ public class HomeActivity extends AppCompatActivity {
         }
         LinearLayout device = UiComponents.card(this);
         device.addView(UiComponents.heading(this, "设备与语音"));
-        CheckBox front = new CheckBox(this); front.setText("默认使用前置摄像头"); front.setTextSize(18);
-        front.setChecked(preferences.getBoolean("front_camera", true));
-        front.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean("front_camera", checked).apply()); device.addView(front);
         CheckBox voice = new CheckBox(this); voice.setText("播报关键提示与训练结束"); voice.setTextSize(18);
         voice.setChecked(preferences.getBoolean("voice", true));
         voice.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean("voice", checked).apply()); device.addView(voice);
@@ -1324,6 +1340,6 @@ public class HomeActivity extends AppCompatActivity {
     @Override protected void onPause() { foreground = false; stopVideo(); super.onPause(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("page", page); super.onSaveInstanceState(state); }
     @Override protected void onDestroy() { generation++; api.close(); media.close(); super.onDestroy(); }
-    @Override public void onBackPressed() { if (offlineTeaching) { if (video != null) navigate("动作库"); else finish(); } else if (!"训练".equals(page) || video != null) navigate("训练"); else super.onBackPressed(); }
+    @Override public void onBackPressed() { if (offlineTeaching) { if (video != null) navigate("动作库"); else finish(); } else if ("训练记录".equals(page) && historyTrends) { if (content.findViewWithTag("training_trends") != null) historyTrends = false; showHistory(); } else if (!"训练".equals(page) || video != null) navigate("训练"); else super.onBackPressed(); }
     @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); if (focus) UiComponents.immersive(this); }
 }

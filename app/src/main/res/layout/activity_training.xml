@@ -14,7 +14,7 @@
         <org.webrtc.SurfaceViewRenderer android:id="@+id/training_remote"
             android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
         <TextView android:id="@+id/training_camera_status" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:layout_gravity="top|start"
+            android:layout_height="wrap_content" android:layout_gravity="top|start" android:visibility="gone"
             android:layout_margin="12dp" android:background="#CC233B38" android:padding="10dp" android:textSize="14sp"
             android:textColor="#FFFFFF" android:text="正在打开摄像头" />
         <TextView android:id="@+id/training_framing" android:layout_width="match_parent"
@@ -22,9 +22,10 @@
             android:background="#DD233B38" android:padding="16dp" android:textSize="16sp"
             android:textColor="#FFFFFF" />
     </FrameLayout>
-    <LinearLayout android:id="@+id/training_info" android:layout_width="0dp" android:layout_height="match_parent"
-        android:layout_weight="@integer/rehab_info_weight" android:orientation="vertical"
-        android:padding="24dp" android:background="@drawable/bg_surface">
+    <FrameLayout android:id="@+id/training_panel" android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="@integer/rehab_info_weight" android:background="@drawable/bg_surface">
+    <LinearLayout android:id="@+id/training_info" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:orientation="vertical" android:padding="24dp">
         <View android:layout_width="match_parent" android:layout_height="3dp" android:background="@color/rehab_primary" android:layout_marginBottom="14dp" />
         <TextView android:id="@+id/training_title" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:textSize="@dimen/rehab_training_title"
@@ -64,5 +65,20 @@
         <LinearLayout android:id="@+id/training_controls" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:orientation="vertical" />
     </LinearLayout>
+    <LinearLayout android:id="@+id/training_countdown" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:orientation="vertical" android:gravity="center" android:padding="24dp"
+        android:background="@drawable/bg_mint" android:visibility="gone">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="准备开始" android:gravity="center" android:textSize="26sp"
+            android:textStyle="bold" android:textColor="@color/rehab_primary" />
+        <TextView android:id="@+id/training_countdown_number" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:gravity="center"
+            android:text="3" android:textSize="144sp" android:fontFamily="sans-serif-medium"
+            android:accessibilityLiveRegion="polite" android:includeFontPadding="false" android:textColor="@color/rehab_primary" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="请保持入镜\n倒计时结束后开始训练" android:gravity="center" android:textSize="18sp"
+            android:textColor="@color/rehab_primary" />
+    </LinearLayout>
+    </FrameLayout>
     </LinearLayout>
 </LinearLayout>

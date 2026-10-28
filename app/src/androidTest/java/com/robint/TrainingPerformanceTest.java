@@ -74,6 +74,8 @@ public class TrainingPerformanceTest {
         String action = InstrumentationRegistry.getArguments().getString("action", "rub");
         String mode = InstrumentationRegistry.getArguments().getString("mode", "local");
         String label = InstrumentationRegistry.getArguments().getString("label", "baseline");
+        int sampleSeconds = Integer.parseInt(InstrumentationRegistry.getArguments().getString("sampleSeconds", "30"));
+        assertTrue(sampleSeconds >= 15 && sampleSeconds <= 60);
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         SharedPreferences preferences = context.getSharedPreferences("rehab", 0);
         Map<String, ?> saved = preferences.getAll();
@@ -100,7 +102,7 @@ public class TrainingPerformanceTest {
                 assertTrue(directory.isDirectory() || directory.mkdirs());
                 long started = SystemClock.elapsedRealtime(), lastAt = started, lastCpu = Process.getElapsedCpuTime();
                 try (FileOutputStream output = new FileOutputStream(new File(directory, label + ".jsonl"), true)) {
-                    while (SystemClock.elapsedRealtime() - started < 75000) {
+                    while (SystemClock.elapsedRealtime() - started < 15000 + sampleSeconds * 1000L) {
                         SystemClock.sleep(1000);
                         JSONObject[] sample = new JSONObject[1];
                         scenario.onActivity(a -> {
@@ -110,7 +112,8 @@ public class TrainingPerformanceTest {
                         });
                         long at = SystemClock.elapsedRealtime(), cpu = Process.getElapsedCpuTime();
                         sample[0].put("action", action).put("mode", mode).put("label", label)
-                            .put("warmup", at - started < 15000).put("wall_time_ms", System.currentTimeMillis())
+                            .put("warmup", at - started < 15000).put("training_elapsed_ms", at - started)
+                            .put("wall_time_ms", System.currentTimeMillis())
                             .put("app_cpu_one_core_percent", 100.0 * (cpu - lastCpu) / (at - lastAt))
                             .put("app_pss_kb", Debug.getPss());
                         lastAt = at; lastCpu = cpu;

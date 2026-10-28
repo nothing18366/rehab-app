@@ -119,6 +119,11 @@ public final class WebRtcClient {
     private volatile int droppedOutput;
     private volatile int remoteWidth;
     private volatile int remoteHeight;
+    private volatile int captureWidth, captureHeight, captureRotation;
+    private PerformanceStats performanceStats;
+    private volatile JSONObject performanceSample = new JSONObject();
+
+    public JSONObject performanceSample() { return performanceSample; }
 
     private final Runnable statsTimer = new Runnable() {
         @Override
@@ -127,7 +132,10 @@ public final class WebRtcClient {
             if (current == null || stopping) return;
             int captureFps = capturedFrames.getAndSet(0);
             int receiveFps = receivedFrames.getAndSet(0);
-            current.getStats(report -> showStats(report, captureFps, receiveFps));
+            int generation = sessionGeneration;
+            current.getStats(report -> {
+                if (generation == sessionGeneration && !stopping) showStats(report, captureFps, receiveFps);
+            });
             mainHandler.postDelayed(this, 1000);
         }
     };
@@ -213,6 +221,9 @@ public final class WebRtcClient {
         localTrack.addSink(frame -> {
             if (destroyed) return;
             capturedFrames.incrementAndGet();
+            captureWidth = frame.getBuffer().getWidth();
+            captureHeight = frame.getBuffer().getHeight();
+            captureRotation = frame.getRotation();
             if (!showingRemote) localView.onFrame(frame);
         });
         capturer.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS);
@@ -323,6 +334,7 @@ public final class WebRtcClient {
         remoteHeight = 0;
         capturedFrames.set(0);
         receivedFrames.set(0);
+        performanceStats = new PerformanceStats();
         localView.setVisibility(View.VISIBLE);
         remoteView.setVisibility(View.GONE);
 
@@ -583,6 +595,16 @@ public final class WebRtcClient {
     }
 
     private void showStats(RTCStatsReport report, int captureFps, int receiveFps) {
+        JSONObject sample = performanceStats.sample(report, captureFps, receiveFps);
+        try {
+            sample.put("server_fps", processedFps).put("server_total_ms", serverMs)
+                    .put("dropped_input", droppedInput).put("dropped_output", droppedOutput)
+                    .put("requested_width", CAPTURE_WIDTH).put("requested_height", CAPTURE_HEIGHT)
+                    .put("requested_fps", CAPTURE_FPS).put("capture_width", captureWidth)
+                    .put("capture_height", captureHeight).put("capture_rotation", captureRotation)
+                    .put("return_width", remoteWidth).put("return_height", remoteHeight);
+        } catch (JSONException e) { throw new IllegalStateException(e); }
+        performanceSample = sample;
         double rttMs = 0;
         double encodeMs = 0;
         long lost = 0;

@@ -15,6 +15,31 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class SkeletonOverlayTest {
+    @Test public void pipelineTimingUsesTheSameSequenceAndOnlyItsFirstDraw() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            SkeletonOverlayView view = new SkeletonOverlayView(InstrumentationRegistry.getInstrumentation().getTargetContext(), null);
+            view.setSession("test"); view.layout(0, 0, 640, 480);
+            JSONObject message = packet("test", 7, 640, 480);
+            try {
+                message.put("decoded_at_ms", 1000).put("timing", RehabApiClient.object("send_started_at_ms", 1060));
+                long at = SystemClock.elapsedRealtime();
+                view.accept(message, at - 12, 80, at - 8);
+                Bitmap pixels = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+                view.draw(new Canvas(pixels)); view.draw(new Canvas(pixels));
+                JSONArray records = view.takePerformance().getJSONArray("pipeline");
+                assertEquals(1, records.length());
+                JSONObject timing = records.getJSONObject(0);
+                assertEquals(7, timing.getLong("seq"));
+                assertEquals(4, timing.getLong("parse_ms"));
+                assertTrue(timing.getLong("ui_queue_ms") >= 8);
+                assertEquals(20., timing.getDouble("return_estimate_ms"), .001);
+                assertTrue(timing.getDouble("decoded_to_first_draw_ms") >= 92);
+                assertEquals(0, view.takePerformance().getJSONArray("pipeline").length());
+                pixels.recycle();
+            } catch (Exception e) { throw new AssertionError(e); }
+        });
+    }
+
     private JSONObject packet(String session, int seq, int width, int height) {
         JSONArray body = new JSONArray();
         for (int i = 0; i < 17; i++) body.put(i == 9 ? new JSONArray().put(Double.valueOf(.25)).put(Double.valueOf(.25)).put(Double.valueOf(.9)) : JSONObject.NULL);

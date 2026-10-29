@@ -24,6 +24,10 @@ public final class SkeletonOverlayView extends View {
     private final float[][] points = {new float[17 * 3], new float[21 * 3], new float[21 * 3]};
     private final float[] screen = new float[21 * 2];
     private final double[] drawCpuMs = new double[128], drawAgeMs = new double[128];
+    private final JSONObject[] pipelineSamples = new JSONObject[128];
+    private int pipelineCount;
+    private JSONObject pendingTiming;
+    private long acceptedAt;
     private String sessionId = "";
     private long sequence = -1, receivedAt, expiresAt, updates, timeouts, draws;
     private int imageWidth, imageHeight, sampleCount;
@@ -48,6 +52,8 @@ public final class SkeletonOverlayView extends View {
         sequence = -1;
         updates = timeouts = draws = 0;
         sampleCount = 0;
+        pipelineCount = 0;
+        pendingTiming = null;
         clearPoints();
     }
 
@@ -56,6 +62,10 @@ public final class SkeletonOverlayView extends View {
     public long sequence() { return sequence; }
 
     public void accept(JSONObject message, long at, double decodedAgeAtReceive) {
+        accept(message, at, decodedAgeAtReceive, at);
+    }
+
+    public void accept(JSONObject message, long at, double decodedAgeAtReceive, long parsedAt) {
         long now = SystemClock.elapsedRealtime();
         long seq = message.optLong("seq", -1);
         int width = message.optInt("width"), height = message.optInt("height");
@@ -81,6 +91,14 @@ public final class SkeletonOverlayView extends View {
         imageWidth = width; imageHeight = height;
         hasPoints = usable;
         if (usable) {
+            acceptedAt = now;
+            JSONObject timing = message.optJSONObject("timing");
+            double sent = timing == null ? Double.NaN : timing.optDouble("send_started_at_ms");
+            double decoded = message.optDouble("decoded_at_ms");
+            double returnMs = decodedAgeAtReceive - (sent - decoded);
+            pendingTiming = RehabApiClient.object("seq", seq, "server", timing,
+                    "parse_ms", parsedAt - at, "ui_queue_ms", now - parsedAt,
+                    "return_estimate_ms", Double.isNaN(returnMs) || Double.isInfinite(returnMs) ? JSONObject.NULL : returnMs);
             receivedAt = at;
             ageAtReceive = decodedAgeAtReceive;
             expiresAt = now + Math.max(1, (long) (MAX_AGE_MS - Math.max(0, age)));
@@ -108,16 +126,25 @@ public final class SkeletonOverlayView extends View {
     private void clearPoints() {
         removeCallbacks(expire);
         hasPoints = false;
+        pendingTiming = null;
         for (float[] group : points) Arrays.fill(group, Float.NaN);
         invalidate();
     }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        long cpuStarted = Debug.threadCpuTimeNanos();
         long now = SystemClock.elapsedRealtime();
         if (hasPoints && now >= expiresAt) expire.run();
         if (!hasPoints || imageWidth == 0) return;
+        if (pendingTiming != null) {
+            try {
+                pendingTiming.put("render_wait_ms", now - acceptedAt)
+                        .put("decoded_to_first_draw_ms", Double.isNaN(ageAtReceive) ? JSONObject.NULL : ageAtReceive + now - receivedAt);
+            } catch (org.json.JSONException e) { throw new IllegalStateException(e); }
+            pipelineSamples[pipelineCount++ % pipelineSamples.length] = pendingTiming;
+            pendingTiming = null;
+        }
+        long cpuStarted = Debug.threadCpuTimeNanos();
         float scale = Math.min(getWidth() / (float) imageWidth, getHeight() / (float) imageHeight);
         float width = imageWidth * scale, height = imageHeight * scale;
         float left = (getWidth() - width) / 2, top = (getHeight() - height) / 2;
@@ -142,13 +169,15 @@ public final class SkeletonOverlayView extends View {
     }
 
     public JSONObject takePerformance() {
-        JSONArray cpu = new JSONArray(), age = new JSONArray();
+        JSONArray cpu = new JSONArray(), age = new JSONArray(), pipeline = new JSONArray();
+        for (int i = 0; i < Math.min(pipelineCount, pipelineSamples.length); i++) pipeline.put(pipelineSamples[i]);
+        pipelineCount = 0;
         for (int i = 0; i < Math.min(sampleCount, drawCpuMs.length); i++) {
             cpu.put(Double.valueOf(drawCpuMs[i]));
             age.put(Double.isNaN(drawAgeMs[i]) ? JSONObject.NULL : drawAgeMs[i]);
         }
         sampleCount = 0;
-        return RehabApiClient.object("draw_cpu_ms", cpu, "decoded_to_draw_ms", age,
+        return RehabApiClient.object("draw_cpu_ms", cpu, "decoded_to_draw_ms", age, "pipeline", pipeline,
                 "updates_total", updates, "timeouts_total", timeouts, "draws_total", draws);
     }
 

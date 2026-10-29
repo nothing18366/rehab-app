@@ -54,6 +54,7 @@ final class PerformanceStats {
             sample.put("encode_cumulative_ms", frames == 0 ? JSONObject.NULL
                     : totals.getOrDefault("upload_totalEncodeTime", 0.0) * 1000 / frames);
             double intervalFrames = sample.optDouble("upload_framesEncoded_delta", 0);
+            sample.put("upload_encoded_fps", sample.isNull("upload_framesEncoded_delta") ? JSONObject.NULL : intervalFrames / seconds);
             sample.put("encode_interval_ms", intervalFrames <= 0 ? JSONObject.NULL
                     : sample.optDouble("upload_totalEncodeTime_delta") * 1000 / intervalFrames);
             for (String prefix : new String[]{"download_", "upload_remote_"}) {

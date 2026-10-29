@@ -1297,8 +1297,27 @@ public class HomeActivity extends AppCompatActivity {
         }
         LinearLayout device = UiComponents.card(this);
         device.addView(UiComponents.heading(this, "设备与语音"));
+        if (SessionStore.staff(this)) {
+            device.addView(UiComponents.heading(this, "日常训练画面"));
+            android.widget.RadioGroup modes = new android.widget.RadioGroup(this);
+            for (String mode : new String[]{"keypoints", "annotated"}) {
+                android.widget.RadioButton choice = new android.widget.RadioButton(this);
+                choice.setId(View.generateViewId()); choice.setTag(mode);
+                choice.setText("annotated".equals(mode) ? "远端标注模式" : "本地骨架模式");
+                choice.setTextSize(18); choice.setMinHeight(UiComponents.dp(this, 56));
+                modes.addView(choice);
+                if (mode.equals(SessionStore.dailyPreviewMode(this))) modes.check(choice.getId());
+            }
+            modes.setOnCheckedChangeListener((group, checked) -> {
+                if (!SessionStore.staff(this)) return;
+                View choice = group.findViewById(checked);
+                if (choice != null) preferences.edit().putString("daily_preview_mode", (String) choice.getTag()).apply();
+            });
+            device.addView(modes);
+            device.addView(UiComponents.text(this, "本机记住选择，患者登录同样适用；下次进入训练生效。远端标注模式切到本地画面后，视频回传仍会继续。", 14, UiComponents.MUTED));
+        }
         if (SessionStore.staff(this)) settingSwitch(device, "下一次训练开启远端诊断",
-                "仅下一次连接生效。日常训练显示本地视频与骨架；远端诊断会增加视频回传开销。", "next_remote_diagnostic", false);
+                "仅覆盖下一次成功连接：使用本地骨架并提供远端原图诊断。之后恢复所选日常模式。", "next_remote_diagnostic", false);
         CheckBox voice = new CheckBox(this); voice.setText("播报关键提示与训练结束"); voice.setTextSize(18);
         voice.setChecked(preferences.getBoolean("voice", true));
         voice.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean("voice", checked).apply()); device.addView(voice);

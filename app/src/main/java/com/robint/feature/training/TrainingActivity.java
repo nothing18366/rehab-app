@@ -37,6 +37,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private boolean speechReady, voice, foreground, permissionRequest, targetAnnounced;
     private boolean flowAbandoned, cameraPermissionDenied, discomfortExit;
     private String state = "loading", runId, sessionId = "", diagnostics = "暂无诊断数据";
+    private String dailyPreviewMode, sessionPreviewMode = "keypoints";
     private String lastSpoken = "", pendingHint = "";
     private long lastSpeechAt, hintSince, lastResultAt;
     private JSONObject run, item, patient, teaching, lastResult;
@@ -53,6 +54,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         api = new RehabApiClient(this);
         runId = getIntent().getStringExtra("run_id");
+        dailyPreviewMode = saved == null ? SessionStore.dailyPreviewMode(this) : saved.getString("daily_preview_mode", "keypoints");
         try { catalog = new JSONArray(getIntent().getStringExtra("catalog")); }
         catch (Exception e) { catalog = new JSONArray(); }
         voice = getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("voice", true);
@@ -121,7 +123,6 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         adaptTrainingLayout();
         rtc = new WebRtcClient(this, findViewById(R.id.training_local), findViewById(R.id.training_remote),
                 findViewById(R.id.training_skeleton), this);
-        rtc.selectCamera(false);
         openPreview();
     }
 
@@ -139,6 +140,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         if (!"preparing".equals(state)) return;
         if (rtc == null || !rtc.isPreviewReady()) { hintView.setText("摄像头尚未就绪，请确认权限并等待画面出现"); return; }
         primary.setEnabled(false);
+        diagnosticRequested = SessionStore.staff(this) && getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("next_remote_diagnostic", false);
+        sessionPreviewMode = diagnosticRequested ? "diagnostic" : dailyPreviewMode;
         hintView.setText("正在检查服务与模型…");
         int ticket = ++requestGeneration;
         api.get("/health", (data, error) -> {
@@ -146,13 +149,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             if (error != null) { preparationError(error); return; }
             JSONObject health = (JSONObject) data;
             JSONObject capabilities = health.optJSONObject("capabilities");
-            if (capabilities == null || !capabilities.optBoolean("local_skeleton_v1") || !capabilities.optBoolean("clock_sync_v1")) {
-                preparationError("服务端尚不支持本地骨架画面，请联系工作人员升级服务端"); return;
-            }
-            if (SessionStore.staff(this) && getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("next_remote_diagnostic", false)
-                    && (!capabilities.optBoolean("diagnostic_video") || !capabilities.optBoolean("diagnostic_png"))) {
-                preparationError("服务端尚不支持远端诊断，请升级服务端或关闭下一次诊断开关"); return;
-            }
+            String capabilityError = previewCapabilityError(capabilities, sessionPreviewMode);
+            if (capabilityError != null) { preparationError(capabilityError); return; }
             if (!health.optBoolean("model_loaded")) { preparationError("模型尚未就绪，请联系工作人员检查服务"); return; }
             if (health.optBoolean("busy")) { preparationError("另一个设备正在训练，请稍后重试"); return; }
             state = "countdown";
@@ -162,6 +160,16 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
 
     private void preparationError(String message) {
         state = "preparing"; primary.setEnabled(true); hintView.setText(message);
+    }
+
+    private static String previewCapabilityError(JSONObject capabilities, String mode) {
+        if ("annotated".equals(mode)) return capabilities != null && capabilities.optBoolean("annotated_video_v1")
+                ? null : "服务端尚不支持远端标注，请升级服务端或由工作人员选择本地骨架模式";
+        if (capabilities == null || !capabilities.optBoolean("local_skeleton_v1") || !capabilities.optBoolean("clock_sync_v1"))
+            return "服务端尚不支持本地骨架画面，请联系工作人员升级服务端";
+        if ("diagnostic".equals(mode) && (!capabilities.optBoolean("diagnostic_video") || !capabilities.optBoolean("diagnostic_png")))
+            return "服务端尚不支持远端诊断，请升级服务端或关闭下一次诊断开关";
+        return null;
     }
 
     private void countdown(int seconds) {
@@ -183,9 +191,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             if (error != null) { if (foreground && ticket == requestGeneration) onError(error); return; }
             sessionId = ((JSONObject) data).optString("id");
             if (!foreground || ticket != requestGeneration || !"connecting".equals(state)) { interruptRecord(); return; }
-            diagnosticRequested = SessionStore.staff(this) && getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("next_remote_diagnostic", false);
             rtc.start(api.base(), RehabApiClient.object("session_id", sessionId,
-                    "preview_mode", diagnosticRequested ? "diagnostic" : "keypoints"));
+                    "preview_mode", sessionPreviewMode));
             handler.postDelayed(() -> {
                 if (foreground && "connecting".equals(state) && ticket == requestGeneration) onError("视频连接超时，请检查网络后重新开始");
             }, 20000);
@@ -211,7 +218,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             diagnosticButton = UiComponents.button(this, "工作人员诊断", false, v -> showRemoteDiagnostic());
             controls.addView(diagnosticButton);
         }
-        onPreviewChanged(rtc.isSkeletonEnabled(), rtc.hasDiagnosticVideo());
+        onPreviewChanged(rtc.currentPreview(), rtc.isAnnotatedMode() ? rtc.hasReturnVideo() : rtc.hasDiagnosticVideo());
         primary = UiComponents.button(this, "结束本项", true, v -> finishItem());
         primary.setBackgroundTintList(ColorStateList.valueOf(UiComponents.DANGER)); controls.addView(primary);
         MaterialButton safe = UiComponents.button(this, "因不适结束", false, v -> {
@@ -510,18 +517,23 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             hintView.setText("确认患者、患侧与入镜范围后，点击开始。" + teaching.optString("cooperation"));
         }
     }
-    @Override public void onCameraSelected(boolean front, boolean switching) { }
-    @Override public void onPreviewChanged(boolean skeleton, boolean diagnosticAvailable) {
+    @Override public void onPreviewChanged(String view, boolean alternateAvailable) {
+        boolean annotated = rtc != null && rtc.isAnnotatedMode();
+        boolean skeleton = "skeleton".equals(view);
         if (preview != null) {
-            preview.setEnabled(true); preview.setText(skeleton ? "本地画面" : "骨架画面");
-            preview.setContentDescription(skeleton ? "切换到本地画面，隐藏骨架" : "切换到骨架画面");
+            preview.setEnabled(!annotated || alternateAvailable);
+            preview.setText(annotated ? ("annotated".equals(view) ? "本地画面" : "远端标注画面") : skeleton ? "本地画面" : "骨架画面");
+            preview.setContentDescription("切换到" + preview.getText());
         }
         if (diagnosticButton != null) {
-            diagnosticButton.setEnabled(diagnosticAvailable);
+            diagnosticButton.setEnabled(alternateAvailable);
             diagnosticButton.setText(rtc != null && rtc.showingDiagnostic() ? "诊断中 · 返回训练画面" : "工作人员诊断");
         }
-        if (cameraStatus != null) cameraStatus.setText(rtc != null && rtc.showingDiagnostic()
-                ? "工作人员远端诊断" : skeleton ? "本地视频与骨架" : "本地视频");
+        if (cameraStatus != null) {
+            cameraStatus.setVisibility(annotated ? View.VISIBLE : View.GONE);
+            cameraStatus.setText("diagnostic".equals(view) ? "工作人员远端诊断"
+                : "annotated".equals(view) ? "服务端标注视频" : skeleton ? "本地视频与骨架" : "本地视频");
+        }
     }
     @Override public void onStats(String message) { diagnostics = message; }
     private void showDiagnostics() { new AlertDialog.Builder(this).setTitle("实时诊断").setMessage(diagnostics).setPositiveButton("关闭", null).show(); }
@@ -617,7 +629,9 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         if (speech != null) { speech.stop(); speech.shutdown(); }
         super.onDestroy();
     }
-    @Override protected void onSaveInstanceState(Bundle saved) { saved.putString("session_id", sessionId); super.onSaveInstanceState(saved); }
+    @Override protected void onSaveInstanceState(Bundle saved) {
+        saved.putString("session_id", sessionId); saved.putString("daily_preview_mode", dailyPreviewMode); super.onSaveInstanceState(saved);
+    }
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results); permissionRequest = false;
         if (request == 202 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) openPreview();

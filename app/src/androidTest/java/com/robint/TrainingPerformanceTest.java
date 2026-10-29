@@ -12,6 +12,7 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import com.robint.data.local.SessionStore;
 import com.robint.data.remote.RehabApiClient;
 import com.robint.feature.training.TrainingActivity;
+import com.robint.feature.home.HomeActivity;
 import com.robint.rtc.WebRtcClient;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -83,13 +84,37 @@ public class TrainingPerformanceTest {
         SharedPreferences preferences = context.getSharedPreferences("rehab", 0);
         Map<String, ?> saved = preferences.getAll();
         try {
-            preferences.edit().putString("server_url", base).putBoolean("voice", false).commit();
+            preferences.edit().putString("server_url", base).putBoolean("voice", false)
+                .putString("daily_preview_mode", ("annotated".equals(mode) || "diagnostic".equals(mode)) ? "annotated" : "keypoints").commit();
             JSONObject login = (JSONObject) request("POST", "/api/v1/auth/staff-login", RehabApiClient.object("username", "admin", "password", "123"));
             token = login.getString("token");
             SessionStore.save(context, login);
             preferences.edit().putBoolean("next_remote_diagnostic", "diagnostic".equals(mode)).commit();
             JSONObject patient = (JSONObject) request("POST", "/api/v1/patients", RehabApiClient.object("name", "性能测试志愿者", "affected_side", "right", "forearm_cm", 25));
-            JSONObject run = (JSONObject) request("POST", "/api/v1/training-runs", RehabApiClient.object("patient_id", patient.getString("id"), "mode", "single", "action", action, "target_reps", 99));
+            if ("diagnostic".equals(mode)) {
+                try (ActivityScenario<HomeActivity> settings = ActivityScenario.launch(new Intent(context, HomeActivity.class).putExtra("page", "设备与服务"))) {
+                    settings.onActivity(a -> {
+                        android.widget.RadioButton local = a.findViewById(android.R.id.content).findViewWithTag("keypoints");
+                        android.widget.RadioButton remote = a.findViewById(android.R.id.content).findViewWithTag("annotated");
+                        assertNotNull(local); assertNotNull(remote); assertTrue(remote.isChecked());
+                        local.performClick(); assertEquals("keypoints", SessionStore.dailyPreviewMode(context));
+                        remote.performClick(); assertEquals("annotated", SessionStore.dailyPreviewMode(context));
+                    });
+                    InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                    SystemClock.sleep(300);
+                    File shots = new File(context.getFilesDir(), "benchmarks");
+                    assertTrue(shots.isDirectory() || shots.mkdirs());
+                    android.graphics.Bitmap image = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+                    try (FileOutputStream output = new FileOutputStream(new File(shots, "daily-mode-settings.png"))) {
+                        assertTrue(image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+                    } finally { image.recycle(); }
+                }
+                request("PUT", "/api/v1/patients/" + patient.getString("id") + "/plan", RehabApiClient.object("items", new JSONArray()
+                    .put(RehabApiClient.object("action", action, "target_reps", 99))
+                    .put(RehabApiClient.object("action", "fist".equals(action) ? "rub" : "fist", "target_reps", 99))));
+            }
+            JSONObject run = (JSONObject) request("POST", "/api/v1/training-runs", RehabApiClient.object("patient_id", patient.getString("id"),
+                "mode", "diagnostic".equals(mode) ? "plan" : "single", "action", action, "target_reps", 99));
             String runId = run.getString("id");
             request("PUT", "/api/v1/training-runs/" + runId + "/feedback/pre", RehabApiClient.object("state", "skipped"));
             JSONArray catalog = (JSONArray) request("GET", "/api/v1/actions", null);
@@ -98,6 +123,29 @@ public class TrainingPerformanceTest {
                 waitFor(scenario, a -> field(a, "rtc") != null && ((WebRtcClient) field(a, "rtc")).isPreviewReady());
                 scenario.onActivity(a -> invoke(a, "checkAndCountdown"));
                 waitFor(scenario, a -> "training".equals(field(a, "state")));
+                if ("annotated".equals(mode)) {
+                    waitFor(scenario, a -> "annotated".equals(((WebRtcClient) field(a, "rtc")).currentPreview()));
+                    scenario.onActivity(a -> {
+                        assertNull(field(field(a, "rtc"), "poseChannel"));
+                        assertFalse(((WebRtcClient) field(a, "rtc")).isSkeletonEnabled());
+                    });
+                    if ("true".equals(InstrumentationRegistry.getArguments().getString("testReturnPause"))) {
+                        request("POST", "/test/return-video/pause", RehabApiClient.object());
+                        try {
+                            waitFor(scenario, a -> "local".equals(((WebRtcClient) field(a, "rtc")).currentPreview()));
+                            scenario.onActivity(a -> {
+                                assertEquals("training", field(a, "state"));
+                                assertFalse(((android.view.View) field(a, "preview")).isEnabled());
+                            });
+                        } finally { request("POST", "/test/return-video/resume", RehabApiClient.object()); }
+                        waitFor(scenario, a -> ((WebRtcClient) field(a, "rtc")).hasReturnVideo());
+                        scenario.onActivity(a -> {
+                            WebRtcClient rtc = (WebRtcClient) field(a, "rtc");
+                            assertEquals("local", rtc.currentPreview());
+                            rtc.togglePreview(); assertEquals("annotated", rtc.currentPreview());
+                        });
+                    }
+                }
                 scenario.onActivity(a -> {
                     WebRtcClient rtc = (WebRtcClient) field(a, "rtc");
                     Object peer = field(rtc, "peer"); Object identity = field(a, "sessionId");
@@ -107,10 +155,13 @@ public class TrainingPerformanceTest {
                     assertSame(result, field(a, "lastResult")); assertEquals("training", field(a, "state"));
                 });
                 if ("diagnostic".equals(mode)) {
-                    waitFor(scenario, a -> field(field(a, "rtc"), "remoteTrack") != null);
+                    waitFor(scenario, a -> ((WebRtcClient) field(a, "rtc")).hasDiagnosticVideo());
                     scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).toggleDiagnostic());
-                    waitFor(scenario, a -> ((WebRtcClient) field(a, "rtc")).performanceSample().optInt("return_width") > 0);
+                    waitFor(scenario, a -> ((WebRtcClient) field(a, "rtc")).showingDiagnostic());
                     assertFalse(preferences.getBoolean("next_remote_diagnostic", false));
+                    assertEquals("annotated", SessionStore.dailyPreviewMode(context));
+                    preferences.edit().putString("daily_preview_mode", "keypoints").commit();
+                    scenario.onActivity(a -> assertFalse(((WebRtcClient) field(a, "rtc")).isAnnotatedMode()));
                     CountDownLatch snapshot = new CountDownLatch(1);
                     AtomicReference<Object> image = new AtomicReference<>();
                     scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).diagnosticFrame((data, error) -> {
@@ -133,7 +184,7 @@ public class TrainingPerformanceTest {
                         JSONObject[] sample = new JSONObject[1];
                         scenario.onActivity(a -> {
                             assertEquals("training", field(a, "state"));
-                            if (!"diagnostic".equals(mode)) assertNull(field(field(a, "rtc"), "remoteTrack"));
+                            if (!"diagnostic".equals(mode) && !"annotated".equals(mode)) assertNull(field(field(a, "rtc"), "remoteTrack"));
                             try { sample[0] = new JSONObject(((WebRtcClient) field(a, "rtc")).performanceSample().toString()); }
                             catch (Exception e) { throw new AssertionError(e); }
                         });
@@ -148,6 +199,21 @@ public class TrainingPerformanceTest {
                     }
                     scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).stopTraining());
                     waitFor(scenario, a -> !"training".equals(field(a, "state")));
+                    if ("diagnostic".equals(mode)) {
+                        waitFor(scenario, a -> "result".equals(field(a, "state")));
+                        scenario.onActivity(a -> { invoke(a, "showRest"); invoke(a, "prepareItem"); });
+                        waitFor(scenario, a -> field(a, "rtc") != null && ((WebRtcClient) field(a, "rtc")).isPreviewReady());
+                        scenario.onActivity(a -> invoke(a, "checkAndCountdown"));
+                        waitFor(scenario, a -> "training".equals(field(a, "state")));
+                        waitFor(scenario, a -> "annotated".equals(((WebRtcClient) field(a, "rtc")).currentPreview()));
+                        scenario.onActivity(a -> {
+                            assertEquals("annotated", field(a, "dailyPreviewMode"));
+                            assertEquals("annotated", field(a, "sessionPreviewMode"));
+                            assertNull(field(field(a, "rtc"), "poseChannel"));
+                            ((WebRtcClient) field(a, "rtc")).stopTraining();
+                        });
+                        waitFor(scenario, a -> "result".equals(field(a, "state")));
+                    }
                     output.write((RehabApiClient.object("type", "saved_run", "run", request("GET", "/api/v1/training-runs/" + runId, null)) + "\n").getBytes(StandardCharsets.UTF_8));
                 }
             }

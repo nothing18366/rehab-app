@@ -15,6 +15,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.webrtc.Camera2Enumerator;
 import org.webrtc.CameraVideoCapturer;
+import org.webrtc.CapturerObserver;
 import org.webrtc.DataChannel;
 import org.webrtc.DefaultVideoDecoderFactory;
 import org.webrtc.DefaultVideoEncoderFactory;
@@ -37,6 +38,7 @@ import org.webrtc.SoftwareVideoEncoderFactory;
 import org.webrtc.SurfaceTextureHelper;
 import org.webrtc.SurfaceViewRenderer;
 import org.webrtc.VideoSource;
+import org.webrtc.VideoFrame;
 import org.webrtc.VideoTrack;
 
 import java.io.IOException;
@@ -67,8 +69,7 @@ public final class WebRtcClient {
         void onMessage(JSONObject message);
         void onError(String message);
         void onStats(String message);
-        void onPreviewChanged(boolean skeleton, boolean diagnosticAvailable);
-        void onCameraSelected(boolean front, boolean switching);
+        void onPreviewChanged(String view, boolean alternateAvailable);
     }
 
     // Keep pixel count stable; improve compression quality before raising resolution.
@@ -105,14 +106,14 @@ public final class WebRtcClient {
     private JSONObject training;
     private boolean previewRunning;
     private boolean cameraReady;
-    private boolean cameraFailed;
     private int previewGeneration;
     private volatile int sessionGeneration;
-    private boolean frontCamera = true;
-    private boolean switchingCamera;
     private volatile boolean stopping;
     private boolean preferRemote;
-    private boolean skeletonEnabled = true, diagnostic;
+    private boolean skeletonEnabled = true;
+    private String previewMode = "keypoints";
+    private volatile long lastRemoteFrameAt;
+    private boolean remoteTimedOut;
     private volatile long clockRequestedAt, clockSyncedAt;
     private volatile double clockOffset = Double.NaN, clockRtt = Double.NaN;
     private volatile boolean showingRemote;
@@ -138,6 +139,7 @@ public final class WebRtcClient {
         public void run() {
             PeerConnection current = peer;
             if (current == null || stopping) return;
+            checkRemoteTimeout();
             if (SystemClock.elapsedRealtime() - clockRequestedAt >= 5000) sendClockPing();
             int captureFps = capturedFrames.getAndSet(0);
             int receiveFps = receivedFrames.getAndSet(0);
@@ -181,39 +183,37 @@ public final class WebRtcClient {
         if (previewRunning || destroyed) return;
         final int cameraGeneration = ++previewGeneration;
         cameraReady = false;
-        cameraFailed = false;
         Camera2Enumerator cameras = new Camera2Enumerator(activity);
         for (String name : cameras.getDeviceNames()) {
-            if (frontCamera ? cameras.isFrontFacing(name) : cameras.isBackFacing(name)) {
+            if (cameras.isBackFacing(name)) {
                 capturer = cameras.createCapturer(name, new CameraVideoCapturer.CameraEventsHandler() {
                     @Override public void onCameraOpening(String cameraName) { }
                     @Override public void onFirstFrameAvailable() {
                         activity.runOnUiThread(() -> {
                             if (cameraGeneration != previewGeneration) return;
                             cameraReady = true;
-                            cameraFailed = false;
-                            listener.onCameraStatus((frontCamera ? "前置" : "后置") + "摄像头已就绪");
+                            listener.onCameraStatus("后置摄像头已就绪");
                         });
                     }
                     @Override public void onCameraClosed() { }
                     @Override public void onCameraError(String error) {
                         activity.runOnUiThread(() -> {
                             if (cameraGeneration != previewGeneration) return;
-                            cameraReady = false; cameraFailed = true;
+                            cameraReady = false;
                             listener.onError("摄像头错误：" + error);
                         });
                     }
                     @Override public void onCameraDisconnected() {
                         activity.runOnUiThread(() -> {
                             if (cameraGeneration != previewGeneration) return;
-                            cameraReady = false; cameraFailed = true;
+                            cameraReady = false;
                             listener.onError("摄像头已断开");
                         });
                     }
                     @Override public void onCameraFreezed(String error) {
                         activity.runOnUiThread(() -> {
                             if (cameraGeneration != previewGeneration) return;
-                            cameraReady = false; cameraFailed = true;
+                            cameraReady = false;
                             listener.onError("摄像头画面已停止：" + error);
                         });
                     }
@@ -222,107 +222,33 @@ public final class WebRtcClient {
             }
         }
         if (capturer == null) {
-            listener.onError("没有可用的" + (frontCamera ? "前置" : "后置") + "摄像头");
+            listener.onError("没有可用的后置摄像头");
             return;
         }
         videoSource = factory.createVideoSource(false);
-        capturer.initialize(textureHelper, activity, videoSource.getCapturerObserver());
-        localTrack = factory.createVideoTrack("rehab-camera", videoSource);
-        localTrack.addSink(frame -> {
-            if (destroyed) return;
-            capturedFrames.incrementAndGet();
-            captureWidth = frame.getBuffer().getWidth();
-            captureHeight = frame.getBuffer().getHeight();
-            captureRotation = frame.getRotation();
-            if (!showingRemote) localView.onFrame(frame);
+        CapturerObserver uploadObserver = videoSource.getCapturerObserver();
+        // Sender adaptation also drops shared-track preview frames; preview the camera before adaptation.
+        capturer.initialize(textureHelper, activity, new CapturerObserver() {
+            @Override public void onCapturerStarted(boolean success) { uploadObserver.onCapturerStarted(success); }
+            @Override public void onCapturerStopped() { uploadObserver.onCapturerStopped(); }
+            @Override public void onFrameCaptured(VideoFrame frame) {
+                if (!destroyed && cameraGeneration == previewGeneration) {
+                    capturedFrames.incrementAndGet();
+                    captureWidth = frame.getBuffer().getWidth();
+                    captureHeight = frame.getBuffer().getHeight();
+                    captureRotation = frame.getRotation();
+                    if (!showingRemote) localView.onFrame(frame);
+                }
+                uploadObserver.onFrameCaptured(frame);
+            }
         });
+        localTrack = factory.createVideoTrack("rehab-camera", videoSource);
         capturer.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS);
         previewRunning = true;
-        listener.onCameraSelected(frontCamera, false);
-        listener.onCameraStatus("正在打开" + (frontCamera ? "前置" : "后置") + "摄像头");
+        listener.onCameraStatus("正在打开后置摄像头");
     }
 
-    public boolean isPreviewReady() { return previewRunning && cameraReady && !switchingCamera; }
-
-    public void selectCamera(boolean front) {
-        if (switchingCamera || front == frontCamera) return;
-        if (!previewRunning || capturer == null) {
-            frontCamera = front;
-            listener.onCameraSelected(frontCamera, false);
-            return;
-        }
-        Camera2Enumerator cameras = new Camera2Enumerator(activity);
-        String cameraName = null;
-        for (String name : cameras.getDeviceNames()) {
-            if (front ? cameras.isFrontFacing(name) : cameras.isBackFacing(name)) {
-                cameraName = name;
-                break;
-            }
-        }
-        if (cameraName == null) {
-            listener.onCameraStatus("此设备没有可用的" + (front ? "前置" : "后置") + "摄像头");
-            listener.onCameraSelected(frontCamera, false);
-            return;
-        }
-        if (cameraFailed) {
-            // Failed Camera2 sessions cannot use WebRTC's in-session switch operation.
-            stopPreview();
-            frontCamera = front;
-            startPreview();
-            return;
-        }
-        switchingCamera = true;
-        cameraReady = false;
-        listener.onCameraSelected(frontCamera, true);
-        CameraVideoCapturer switchingCapturer = capturer;
-        switchingCapturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
-            @Override
-            public void onCameraSwitchDone(boolean isFrontCamera) {
-                activity.runOnUiThread(() -> {
-                    if (capturer != switchingCapturer) return;
-                    switchingCamera = false;
-                    cameraReady = true;
-                    frontCamera = isFrontCamera;
-                    localView.setMirror(DISPLAY_MIRROR);
-                    remoteView.setMirror(DISPLAY_MIRROR);
-                    listener.onCameraSelected(frontCamera, false);
-                    listener.onCameraStatus((frontCamera ? "前置" : "后置") + "摄像头已打开");
-                });
-            }
-
-            @Override
-            public void onCameraSwitchError(String error) {
-                activity.runOnUiThread(() -> {
-                    if (capturer != switchingCapturer) return;
-                    switchingCamera = false;
-                    cameraReady = false;
-                    cameraFailed = true;
-                    listener.onCameraSelected(frontCamera, false);
-                    listener.onCameraStatus("切换摄像头失败：" + error);
-                });
-            }
-        }, cameraName);
-    }
-
-    public void stopPreview() {
-        closeSession();
-        previewGeneration++;
-        cameraReady = false;
-        switchingCamera = false;
-        if (capturer == null) return;
-        try {
-            capturer.stopCapture();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        capturer.dispose();
-        capturer = null;
-        if (localTrack != null) localTrack.dispose();
-        localTrack = null;
-        if (videoSource != null) videoSource.dispose();
-        videoSource = null;
-        previewRunning = false;
-    }
+    public boolean isPreviewReady() { return previewRunning && cameraReady; }
 
     public void start(String url, JSONObject training) {
         if (!previewRunning || localTrack == null) {
@@ -332,18 +258,20 @@ public final class WebRtcClient {
         closeSession();
         this.serverUrl = url;
         this.training = training;
-        diagnostic = "diagnostic".equals(training.optString("preview_mode"));
-        skeletonEnabled = true;
+        previewMode = training.optString("preview_mode", "keypoints");
+        skeletonEnabled = !isAnnotatedMode();
+        lastRemoteFrameAt = 0;
+        remoteTimedOut = false;
         clockOffset = clockRtt = Double.NaN;
         clockRequestedAt = clockSyncedAt = 0;
         if (skeletonView != null) {
             skeletonView.setSession(training.optString("session_id"));
             skeletonView.setMirror(DISPLAY_MIRROR);
-            skeletonView.setVisibility(View.VISIBLE);
+            skeletonView.setVisibility(skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
         }
         stopping = false;
         final int generation = sessionGeneration;
-        preferRemote = false;
+        preferRemote = isAnnotatedMode();
         offerSent = false;
         processedFps = 0;
         serverMs = 0;
@@ -408,7 +336,7 @@ public final class WebRtcClient {
         // reliably. Use software VP8 on that device; phones keep H.264.
         RtpTransceiver videoTransceiver = peer.addTransceiver(localTrack,
                 new RtpTransceiver.RtpTransceiverInit(
-                        diagnostic ? RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+                        !"keypoints".equals(previewMode) ? RtpTransceiver.RtpTransceiverDirection.SEND_RECV
                                 : RtpTransceiver.RtpTransceiverDirection.SEND_ONLY,
                         Collections.singletonList("rehab")));
         java.util.ArrayList<RtpCapabilities.CodecCapability> preferred = new java.util.ArrayList<>();
@@ -470,31 +398,34 @@ public final class WebRtcClient {
                 }
             }
         });
-        DataChannel.Init poseInit = new DataChannel.Init();
-        poseInit.ordered = false;
-        poseInit.maxRetransmits = 0;
-        poseChannel = peer.createDataChannel("pose", poseInit);
-        poseChannel.registerObserver(new DataChannel.Observer() {
-            @Override public void onBufferedAmountChange(long amount) { }
-            @Override public void onStateChange() { }
-            @Override public void onMessage(DataChannel.Buffer buffer) {
-                if (generation != sessionGeneration || stopping || skeletonView == null || buffer.binary) return;
-                long receivedAt = SystemClock.elapsedRealtime();
-                if (buffer.data.remaining() > 16384) return;
-                byte[] bytes = new byte[buffer.data.remaining()];
-                buffer.data.get(bytes);
-                try {
-                    JSONObject message = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-                    if (!thisSession(message) || !"pose".equals(message.optString("type"))) return;
-                    double decoded = message.optDouble("decoded_at_ms");
-                    double age = Double.isNaN(decoded) || Double.isInfinite(decoded) || Double.isNaN(clockOffset)
-                            || receivedAt - clockSyncedAt > 60000 ? Double.NaN : receivedAt + clockOffset - decoded;
-                    activity.runOnUiThread(() -> {
-                        if (generation == sessionGeneration && !stopping) skeletonView.accept(message, receivedAt, age);
-                    });
-                } catch (JSONException ignored) { /* Invalid pose updates expire; reliable control stays usable. */ }
-            }
-        });
+        if (!isAnnotatedMode()) {
+            DataChannel.Init poseInit = new DataChannel.Init();
+            poseInit.ordered = false;
+            poseInit.maxRetransmits = 0;
+            poseChannel = peer.createDataChannel("pose", poseInit);
+            poseChannel.registerObserver(new DataChannel.Observer() {
+                @Override public void onBufferedAmountChange(long amount) { }
+                @Override public void onStateChange() { }
+                @Override public void onMessage(DataChannel.Buffer buffer) {
+                    if (generation != sessionGeneration || stopping || skeletonView == null || buffer.binary) return;
+                    long receivedAt = SystemClock.elapsedRealtime();
+                    if (buffer.data.remaining() > 16384) return;
+                    byte[] bytes = new byte[buffer.data.remaining()];
+                    buffer.data.get(bytes);
+                    try {
+                        JSONObject message = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+                        if (!thisSession(message) || !"pose".equals(message.optString("type"))) return;
+                        double decoded = message.optDouble("decoded_at_ms");
+                        double age = Double.isNaN(decoded) || Double.isInfinite(decoded) || Double.isNaN(clockOffset)
+                                || receivedAt - clockSyncedAt > 60000 ? Double.NaN : receivedAt + clockOffset - decoded;
+                        long parsedAt = SystemClock.elapsedRealtime();
+                        activity.runOnUiThread(() -> {
+                            if (generation == sessionGeneration && !stopping) skeletonView.accept(message, receivedAt, age, parsedAt);
+                        });
+                    } catch (JSONException ignored) { /* Invalid pose updates expire; reliable control stays usable. */ }
+                }
+            });
+        }
         peer.createOffer(new SimpleSdpObserver() {
             @Override
             public void onCreateSuccess(SessionDescription offer) {
@@ -599,31 +530,52 @@ public final class WebRtcClient {
     }
 
     private void attachRemote(VideoTrack track, int generation) {
-        if (generation != sessionGeneration || stopping || remoteTrack != null) return;
+        if (generation != sessionGeneration || stopping || remoteTrack != null || "keypoints".equals(previewMode)) return;
         remoteTrack = track;
         activity.runOnUiThread(() -> {
             if (remoteTrack != track || stopping) return;
             updatePreview();
         });
         track.addSink(frame -> {
-            if (remoteTrack != track || stopping) return;
+            if (generation != sessionGeneration || remoteTrack != track || stopping) return;
+            long now = SystemClock.elapsedRealtime();
+            boolean firstFrame = lastRemoteFrameAt == 0;
+            boolean becameAvailable = firstFrame || now - lastRemoteFrameAt >= 3000;
+            lastRemoteFrameAt = now;
             receivedFrames.incrementAndGet();
             remoteWidth = frame.getRotatedWidth();
             remoteHeight = frame.getRotatedHeight();
             if (showingRemote) remoteView.onFrame(frame);
+            if (becameAvailable) activity.runOnUiThread(() -> {
+                if (generation == sessionGeneration && remoteTrack == track && !stopping) {
+                    remoteTimedOut = false;
+                    if (isAnnotatedMode() && !firstFrame) preferRemote = false;
+                    updatePreview();
+                }
+            });
         });
     }
 
     public void togglePreview() {
         if (stopping) return;
-        skeletonEnabled = !skeletonEnabled;
-        preferRemote = false;
+        if (isAnnotatedMode()) {
+            if (!hasReturnVideo()) return;
+            preferRemote = !showingRemote;
+        } else {
+            skeletonEnabled = !skeletonEnabled;
+            preferRemote = false;
+        }
         updatePreview();
     }
 
     public boolean isSkeletonEnabled() { return skeletonEnabled; }
-    public boolean hasDiagnosticVideo() { return diagnostic && remoteTrack != null && !stopping; }
-    public boolean showingDiagnostic() { return showingRemote; }
+    public boolean isAnnotatedMode() { return "annotated".equals(previewMode); }
+    public boolean hasReturnVideo() {
+        return remoteTrack != null && !stopping && lastRemoteFrameAt > 0 && SystemClock.elapsedRealtime() - lastRemoteFrameAt < 3000;
+    }
+    public boolean hasDiagnosticVideo() { return "diagnostic".equals(previewMode) && hasReturnVideo(); }
+    public boolean showingDiagnostic() { return "diagnostic".equals(previewMode) && showingRemote; }
+    public String currentPreview() { return showingRemote ? previewMode : skeletonEnabled ? "skeleton" : "local"; }
     public void toggleDiagnostic() {
         if (!hasDiagnosticVideo()) return;
         preferRemote = !preferRemote;
@@ -633,12 +585,22 @@ public final class WebRtcClient {
     private void updatePreview() {
         localView.setMirror(DISPLAY_MIRROR);
         remoteView.setMirror(DISPLAY_MIRROR);
-        boolean available = hasDiagnosticVideo();
+        boolean available = hasReturnVideo();
         showingRemote = available && preferRemote;
         remoteView.setVisibility(showingRemote ? View.VISIBLE : View.GONE);
         localView.setVisibility(showingRemote ? View.GONE : View.VISIBLE);
         if (skeletonView != null) skeletonView.setVisibility(!showingRemote && skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
-        listener.onPreviewChanged(skeletonEnabled, available);
+        listener.onPreviewChanged(currentPreview(), available);
+        if (isAnnotatedMode() && !stopping && !available) listener.onCameraStatus(lastRemoteFrameAt == 0
+                ? "等待远端标注画面，当前为本地预览" : "远端标注画面中断，已显示本地预览");
+    }
+
+    private void checkRemoteTimeout() {
+        if (isAnnotatedMode() && lastRemoteFrameAt > 0 && !hasReturnVideo() && !remoteTimedOut) {
+            remoteTimedOut = true;
+            preferRemote = false;
+            updatePreview();
+        }
     }
 
     private boolean thisSession(JSONObject message) {
@@ -714,12 +676,13 @@ public final class WebRtcClient {
                     .put("requested_fps", CAPTURE_FPS).put("capture_width", captureWidth)
                     .put("capture_height", captureHeight).put("capture_rotation", captureRotation)
                     .put("return_width", remoteWidth).put("return_height", remoteHeight);
-            sample.put("return_enabled", diagnostic)
+            sample.put("return_enabled", !"keypoints".equals(previewMode)).put("preview_mode", previewMode)
                     .put("clock_rtt_ms", Double.isNaN(clockRtt) || SystemClock.elapsedRealtime() - clockSyncedAt > 60000 ? JSONObject.NULL : clockRtt);
             JSONObject recognition = recognitionStats;
             for (String key : new String[]{"body_fps", "left_hand_fps", "right_hand_fps",
                     "body_updates_total", "left_hand_updates_total", "right_hand_updates_total",
-                    "pose_inferred", "pose_inference_ms", "hand_detection_ms", "tracking_ms"}) {
+                    "pose_inferred", "pose_inference_ms", "hand_detection_ms", "tracking_ms",
+                    "hand_full_detections", "hand_crop_detections"}) {
                 sample.put(key, recognition.opt(key));
             }
         } catch (JSONException e) { throw new IllegalStateException(e); }
@@ -768,7 +731,7 @@ public final class WebRtcClient {
                     : "关键点更新与分段耗时：服务端未提供";
             listener.onStats(String.format(
                     "采集 %.1f  服务端 %.1f  回传 %s\n处理 %.0f  上传编码 %.0f（区间 %.0f）  RTT %.0f ms\n跳帧 %d/%d  丢包 %d  采集 %d×%d\n最近解码→绘制 %s ms；绘制 CPU %s ms\n时钟误差约 ±%s ms；不含采集和上传",
-                    sample.optDouble("capture_fps"), processedFps, diagnostic ? String.format("%.1f FPS", sample.optDouble("return_fps")) : "未启用",
+                    sample.optDouble("capture_fps"), processedFps, !"keypoints".equals(previewMode) ? String.format("%.1f FPS", sample.optDouble("return_fps")) : "未启用",
                     serverMs, finalEncodeMs, sample.optDouble("encode_interval_ms"), finalRttMs,
                     droppedInput, droppedOutput, finalLost, captureWidth, captureHeight,
                     Double.isNaN(age) ? "--" : String.format("%.0f", age),
@@ -795,6 +758,8 @@ public final class WebRtcClient {
         poseChannel = null;
         peer = null;
         remoteTrack = null;
+        lastRemoteFrameAt = 0;
+        skeletonEnabled = false;
         if (skeletonView != null) skeletonView.setSession("");
         if (!destroyed) {
             updatePreview();

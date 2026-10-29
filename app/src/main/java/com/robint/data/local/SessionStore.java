@@ -52,6 +52,9 @@ public final class SessionStore {
         } catch (Exception e) { return ""; }
     }
     public static boolean staff(Context c) { return "staff".equals(prefs(c).getString("auth_role", "")); }
+    public static String dailyPreviewMode(Context c) {
+        return "annotated".equals(prefs(c).getString("daily_preview_mode", "keypoints")) ? "annotated" : "keypoints";
+    }
     public static void clear(Context c) {
         prefs(c).edit().remove("auth_token").remove("auth_role").remove("auth_patient").remove("auth_expires")
             .remove("auth_base").remove("patient_id").remove("active_run").remove("next_remote_diagnostic").apply();

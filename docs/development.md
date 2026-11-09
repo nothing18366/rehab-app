@@ -1,52 +1,75 @@
-# 构建与验证
+# 构建、测试与界面约定
 
-沿用 AGP 7.1.2、Gradle 7.2、JDK 11、Java 8 字节码和现有 WebRTC SDK。Android Studio 配置 Gradle JDK 11 与本机 SDK；不提交 local.properties。
+结构、命名与模块职责统一见 [architecture.md](architecture.md)，操作流程见 [usage.md](usage.md)。本文件只维护构建、测试和界面开发约定。更新日期：2026-11-09。
+
+## 构建与兼容
+
+使用 AGP 7.1.2、Gradle 7.2、JDK 11、Java 8 字节码和现有 WebRTC SDK。Android Studio 配置 Gradle JDK 11 与本机 Android SDK，`local.properties` 不提交。当前 `minSdk=21`、`targetSdk=28`、客户端版本1.3.0。
 
 ```bash
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:lintDebug
+adb -s 机器人IP:端口 install --no-streaming -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-指定 JDK 可在命令前设置 JAVA_HOME。多个设备使用 adb -s 指定序列号。保留 applicationId 和既有签名，正常覆盖安装无需清空患者业务服务或 App 数据。
+需要时在命令前指定 `JAVA_HOME`。保留应用ID与同一签名覆盖安装，不通过卸载绕过版本限制。安装失败需先核对设备上的versionCode，不能清除登录/教学缓存来“解决”升级问题。
 
-仪器测试位于 app/src/androidTest/java/com/robint/RehabFlowTest.java，连接独立测试服务与临时数据库；不要对正式患者服务执行。支持的参数与测试服务地址以测试代码为准。
+Gradle 当前设置 `abortOnError=false`，构建成功不代表 Lint 或旧设备兼容通过。旧版报告发现过日期 `XXX`、`Map.getOrDefault` 与 `forceDarkAllowed` 的 NewApi 问题；当前状态需单独运行 Lint 并用目标旧设备验证，不沿用固定错误数量。
 
-`DailyModesTest` 验证日常设置跨登录保留和按模式检查能力；`SkeletonOverlayTest` 覆盖 FIT、镜像、竖图、序号、会话、预测手点及超时清除。`TrainingPerformanceTest` 为显式开启的实体机器人采样，需 `benchmarkUrl` 指向独立 18121 端口，可传 `action=rub|fist`、`mode=local|skeleton|annotated|diagnostic`、`sampleSeconds=30`。每段预热 15 秒后采样，数据保存在 App 私有 `files/benchmarks/`；正式测试前备份连接配置，完成后恢复。服务端仓库 `tests/rtc_fixture.py` 启动临时测试服务，`tools/benchmark_robot.py` 负责按指定次数采集，`tools/compare_benchmarks.py` 汇总原始指标。
+## 测试范围与隔离
 
-手部骨架显示由服务端提供平滑前真实检测点，动作计数仍使用服务端原有平滑点；Android 不额外平滑或预测。点击训练页 FPS 可查看人体、左右手的新检测更新率，以及最近帧人体推理、手部检测、跟踪与平滑耗时；这些字段也进入性能采样。缓存/预测点不计入新检测更新率，人体复用时推理耗时为 0；旧服务未提供新字段时显示“服务端未提供”。
+| 测试 | 范围 / 启用条件 |
+|---|---|
+| 本地单元测试 | 骨架映射/时效、日常模式偏好与能力检查、语音冷却、屏幕档位与MQTT响应等；运行 `:app:testDebugUnitTest` |
+| `RehabFlowTest` | 登录、账号/找回、患者/计划、前后反馈、真实RTC、中断、服务错误及教学缓存；需参数 `server` 指向独立临时服务，完整参数以测试代码为准 |
+| `TrainingPerformanceTest` | 显式传入 `benchmarkUrl` 的实体机性能采样；支持 `action=rub/fist`、`mode=local/skeleton/annotated/diagnostic`、`sampleSeconds` 等 |
+| `TrainingPresentationTest` | 显式传入 `uiFixture`，验证训练布局与倒计时；只使用匹配该测试的临时夹具 |
+| `TrainingVoiceTest` | 仅 `allowPhysicalVoice=true` 时实际播放内置语音 |
+| `ReviewWorkspaceTest` | 仅接受 `reviewFixture=http://127.0.0.1:18123`，验证人工复核嵌入、登录、视频、表单和退出 |
+| `CameraProbeTest` | 明确传入 `cameraId` 的独立硬件采集；不上传、不建训练记录 |
 
-性能采样的 `skeleton.pipeline` 按骨架消息序号记录首次 Canvas 绘制前的 JSON 解析、主线程等待、屏幕刷新等待，以及服务端分段和返回链路估计；完整定义在服务端 `docs/display_modes.md`。未校准时返回链路和解码→绘制估计为 null；Canvas 开始绘制不代表物理显示完成。
+所有仪器测试先备份机器人连接、偏好与加密登录，结束后核对恢复。测试自身的finally不能保证外部杀进程时恢复；不要连接正式患者库，不使用真实邮件或把真实令牌写入文档。实体App冷启动会请求屏幕默认档位10，现场应先确认设备可安全调整。
 
-动作准确性和主观跟随评估需要真人配合；无真人的相机短测只验证链路、显示和设备开销，需在报告中注明。采样不能与离线推理或构建同时进行。完整画面延迟需外部拍摄；测试数据中的 RTT 和解码→绘制估计不能代替它。测试结束后的外部强停如导致仪器运行器报告失败，应保留退出信息并单独注明，不能将其记为完整 JUnit 通过。
+`RehabFlowTest` 的完整场景还需要临时服务生成的工作人员、患者计划和一次性找回夹具；不提供对应参数时部分用例会跳过。不得用正式患者凭证补齐测试。
 
-`TrainingPerformanceTest` 的 annotated 测试断言没有 pose 通道和本地骨架绘制；diagnostic 测试验证工作人员单选设置、覆盖并消耗一次性开关，以及计划第二个动作恢复固定日常模式（中途修改偏好不改变计划）。可选 `testReturnPause=true` 仅用于带暂停/恢复端点的独立测试夹具，验证远端断流回退和手动恢复，不用于生产服务。
+### 人工复核回归
 
-完整运行 11 项还需提供 `staffToken`、仅含 cup 动作生效计划的 `patientToken`，以及一次性找回夹具 `resetUsername/resetEmail/resetCode`。夹具在临时库中通过认证服务创建，邮件发送使用测试替身；不提供患者或找回夹具时，相应用例会跳过。测试服务需清空 SMTP_* 环境，便于验证未配置邮件的提示。
+在配套后端根目录启动 `python tests/review_fixture.py`：仅监听本机18123，临时数据库、合成视频、无真实模型和邮件。然后在本Android工程运行：
 
 ```bash
-./gradlew :app:lintDebug
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.server=http://10.0.2.2:测试端口
+adb -s 机器人IP:端口 install --no-streaming -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s 机器人IP:端口 reverse tcp:18123 tcp:18123
+adb -s 机器人IP:端口 shell am instrument -w -r \
+  -e class com.robint.ReviewWorkspaceTest \
+  -e reviewFixture http://127.0.0.1:18123 \
+  com.robint.sdk.demo.test/androidx.test.runner.AndroidJUnitRunner
+adb -s 机器人IP:端口 reverse --remove tcp:18123
 ```
 
-仪器测试覆盖计划/患者切换、登录账号、找回密码界面、反馈、真实 RTC、前后台中断、不适结束、服务错误及缓存失败回退。测试相机可能是模拟器彩条，不能据此声称真实动作准确率或目标设备帧率。真实邮件、实体摄像头、中文语音和 Jetson 六动作性能需单独验收。
+测试覆盖App菜单保留、直接复用登录、视频解码、手填信息初始空白、普通/150%字号、草稿、切后台保留输入、取消离开及菜单/工具栏/系统返回不循环重开。退出确认由WebView异步返回，测试需等待对话框实际出现。测试finally恢复全部原偏好；截图在App私有 `files/benchmarks/review-workspace-*.png`。重跑前重启临时夹具，避免上次保存的草稿影响空白断言；测试结束关闭夹具并移除端口转发。
 
-当前 Lint 有 5 项 NewApi 错误：日期解析 XXX 格式和三处 Map.getOrDefault 要求 API 24，forceDarkAllowed 主题属性要求 API 29，而 minSdk 为 21。Gradle 沿用 abortOnError=false，因此需单独检查 Lint 报告；旧设备兼容修复列在后端 remaining_work.md。
+### 性能与屏幕角度
 
-## 界面约定
+配套后端 `tests/rtc_fixture.py` 使用临时库与固定18121端口；采样与汇总由后端 `tools/benchmark_robot.py`、`tools/compare_benchmarks.py` 执行。采样前15秒预热，默认30秒有效窗口，App原始记录位于 `files/benchmarks/`；不要同时构建或运行离线推理抢占资源。
 
-采用固定浅色主题：森林绿导航、绿色主操作、浅色工作区、白色卡片；系统夜间模式下保留已设计配色。普通页面横竖屏适配，大屏侧栏、竖屏底部导航，低高度横屏紧凑布局。
+`testReturnPause=true` 仅适用于带暂停/恢复端点的独立夹具，用于远端断流回退/手动恢复；`screenAngle=true` 会额外实际移动屏幕，只在现场明确安排时启用。命令、协议与机械边界见 [screen-angle-test.md](screen-angle-test.md)。
 
-主要触控至少 48dp，主按钮 56dp；字号使用 sp，关键次数、阶段、提示、预览切换和结束操作优先可见。视频保持比例，训练中不加入图片加载或复杂动画。系统关闭动画时不执行页面淡入。
+性能记录中RTT、解码→首次Canvas绘制估计与物理画面延迟是不同量，未校准值保留null。出现系统外部强停时，应区分采样完成与完整JUnit通过。相机彩条、无真人或合成片段只证明链路和界面，不证明动作准确率；计时定义与历史数据见配套后端 `docs/display_modes.md`。
 
-首页周完成进度来自真实日程，计数、FPS、时长和结果来自服务，不使用原型模拟数值。教学照片属于示范而非实时画面。患者登录默认显示账号密码，管理员入口单独提供。
+## 界面开发约定
+
+- 沿用森林绿导航、浅色工作区与白色卡片，固定浅色主题；普通页面横竖屏适配，训练横屏，编辑/复核固定方向保护输入。主要触控至少48dp，主按钮56dp，字号使用sp。
+- 先用布局、层级、间距和清晰的主操作说明流程。避免重复标题、次要标签、slogan、教学段落和每个区块下常驻的辅助小字；重写已有界面时先删冗余，再检查首次使用者是否仍知道点哪里及结果。
+- 必要的补充说明优先用有可访问名称的info图标与tooltip，支持键盘和触屏；仅在确有需要时增加，不为留白新增图标。
+- 保留表单标签、可访问名称、加载/错误/保存反馈。删除、提交永久性变更等操作的后果必须清晰可见，不能只放tooltip。
+- 标题与内容统一左右边线，App人工复核只保留原生页头，网页嵌入时隐藏重复页头；保留原生导航、返回和未保存确认。
+- 次数、阶段、提示、预览切换和结束操作优先可见；视频保持比例，关闭系统动画时不执行页面淡入。日程与统计读取真实服务数据，不使用模拟数值。
 
 ## 机器人摄像头与编码
 
-训练固定使用 Android 标记的后置相机。当前 RK3588/Android 12 的后置 ID 102（AX-8M-V2.0）可连续采集 640×480；前置 ID 100（CCB Camera）曾报设备资源占用，系统标签不代表外壳实际位置。不要因格式列表声称支持就判断采集可用，也不要自动停止厂商相机或 ROS 服务。设备实际可能约 30 FPS，请以采样为准。
+训练使用Android标记的后置相机。既有RK3588/Android 12验证中，后置ID102（AX-8M-V2.0）可连续采集640×480；前置ID100曾报资源占用。系统标签不代表外壳实际位置，格式列表不证明实际可用；不要自动停止厂商相机或ROS服务。
 
-RK3588 保留软件 VP8，其他设备沿用 H.264。该机器人硬件编码曾产生服务端不可解码 RTP，若调整编码器，须先确认服务端实际收到并解码图像，不能只看连接成功或 RTT。
-
-`CameraProbeTest#cameraDeliversFrames` 为显式启用的硬件检查，仅采集并丢弃图像，不上传或创建训练记录：
+该机器人保留软件VP8，其他设备沿用H.264。硬件编码曾产生服务端无法解码的RTP，调整后必须核对服务端真实解码，不能只看连接成功或RTT。采集请求15FPS不代表实际相机只有15FPS。
 
 ```bash
 adb -s 机器人IP:端口 shell am instrument -w \

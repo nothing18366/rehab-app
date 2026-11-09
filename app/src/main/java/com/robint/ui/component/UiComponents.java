@@ -157,14 +157,16 @@ public final class UiComponents {
     public static void summary(Context context, LinearLayout card, org.json.JSONObject summary, double elapsed) {
         if (summary == null) { card.addView(text(context, "尚无识别结果", 18, MUTED)); return; }
         LinearLayout metrics = row(context); metrics.setPadding(0, dp(context, 24), 0, dp(context, 24));
-        String[] labels = {"完成 / 目标", "算法合格次数", "需复核次数"};
-        String[] values = {summary.optInt("count") + " / " + summary.optInt("target"), String.valueOf(summary.optInt("passed")), String.valueOf(summary.optInt("review"))};
+        boolean qualifiedProgress = summary.has("progress_count");
+        String[] labels = {qualifiedProgress ? "合格 / 目标" : "完成 / 目标", qualifiedProgress ? "已判定次数" : "算法合格次数", "需复核次数"};
+        String[] values = {summary.optInt("progress_count", summary.optInt("count")) + " / " + summary.optInt("target"), String.valueOf(summary.optInt(qualifiedProgress ? "count" : "passed")), String.valueOf(summary.optInt("review"))};
         for (int i = 0; i < labels.length; i++) {
             LinearLayout metric = column(context); metric.setGravity(Gravity.CENTER);
             TextView number = heading(context, values[i]); number.setTextSize(portrait(context) ? 24 : 32); number.setTextColor(i == 2 ? ORANGE : PRIMARY);
             metric.addView(number); metric.addView(text(context, labels[i], 14, MUTED)); metrics.addView(metric, new LinearLayout.LayoutParams(0, -2, 1));
         }
         card.addView(metrics);
+        if (qualifiedProgress) value(context, card, "尝试 / 无法判定", summary.optInt("attempts") + " / " + summary.optInt("unassessable") + " 次");
         value(context, card, "算法合格率", summary.optInt("count") == 0 ? "暂无判定" : String.format(java.util.Locale.CHINA, "%.1f%%（%d / %d）", summary.optDouble("rate"), summary.optInt("passed"), summary.optInt("count")));
         value(context, card, "实际训练用时", String.format(java.util.Locale.CHINA, "%.1f 秒", elapsed));
         value(context, card, "识别动作累计 / 单次平均", String.format(java.util.Locale.CHINA, "%.1f / %.1f 秒", summary.optDouble("total"), summary.optDouble("avg")));

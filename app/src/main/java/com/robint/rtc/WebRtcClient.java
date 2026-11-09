@@ -4,6 +4,9 @@ import com.robint.data.local.SessionStore;
 import com.robint.data.remote.RehabApiClient;
 
 import android.app.Activity;
+import android.hardware.display.DisplayManager;
+import android.view.Display;
+import android.view.WindowManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Build;
@@ -86,6 +89,7 @@ public final class WebRtcClient {
     private final SurfaceViewRenderer localView;
     private final SurfaceViewRenderer remoteView;
     private final SkeletonOverlayView skeletonView;
+    private volatile ExternalTrainingPresentation externalPresentation;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -237,7 +241,11 @@ public final class WebRtcClient {
                     captureWidth = frame.getBuffer().getWidth();
                     captureHeight = frame.getBuffer().getHeight();
                     captureRotation = frame.getRotation();
-                    if (!showingRemote) localView.onFrame(frame);
+                    if (!showingRemote) {
+                        localView.onFrame(frame);
+                        ExternalTrainingPresentation external = externalPresentation;
+                        if (external != null) external.onFrame(frame);
+                    }
                 }
                 uploadObserver.onFrameCaptured(frame);
             }
@@ -260,6 +268,10 @@ public final class WebRtcClient {
         this.training = training;
         previewMode = training.optString("preview_mode", "keypoints");
         skeletonEnabled = !isAnnotatedMode();
+        if (externalPresentation != null) {
+            externalPresentation.skeleton.setSession(training.optString("session_id"));
+            externalPresentation.skeleton.setVisibility(skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
+        }
         lastRemoteFrameAt = 0;
         remoteTimedOut = false;
         clockOffset = clockRtt = Double.NaN;
@@ -420,7 +432,11 @@ public final class WebRtcClient {
                                 || receivedAt - clockSyncedAt > 60000 ? Double.NaN : receivedAt + clockOffset - decoded;
                         long parsedAt = SystemClock.elapsedRealtime();
                         activity.runOnUiThread(() -> {
-                            if (generation == sessionGeneration && !stopping) skeletonView.accept(message, receivedAt, age, parsedAt);
+                            if (generation == sessionGeneration && !stopping) {
+                                skeletonView.accept(message, receivedAt, age, parsedAt);
+                                if (externalPresentation != null)
+                                    externalPresentation.skeleton.accept(message, receivedAt, age, parsedAt);
+                            }
                         });
                     } catch (JSONException ignored) { /* Invalid pose updates expire; reliable control stays usable. */ }
                 }
@@ -545,7 +561,11 @@ public final class WebRtcClient {
             receivedFrames.incrementAndGet();
             remoteWidth = frame.getRotatedWidth();
             remoteHeight = frame.getRotatedHeight();
-            if (showingRemote) remoteView.onFrame(frame);
+            if (showingRemote) {
+                remoteView.onFrame(frame);
+                ExternalTrainingPresentation external = externalPresentation;
+                if (external != null) external.onFrame(frame);
+            }
             if (becameAvailable) activity.runOnUiThread(() -> {
                 if (generation == sessionGeneration && remoteTrack == track && !stopping) {
                     remoteTimedOut = false;
@@ -590,6 +610,8 @@ public final class WebRtcClient {
         remoteView.setVisibility(showingRemote ? View.VISIBLE : View.GONE);
         localView.setVisibility(showingRemote ? View.GONE : View.VISIBLE);
         if (skeletonView != null) skeletonView.setVisibility(!showingRemote && skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
+        if (externalPresentation != null) externalPresentation.skeleton.setVisibility(
+                !showingRemote && skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
         listener.onPreviewChanged(currentPreview(), available);
         if (isAnnotatedMode() && !stopping && !available) listener.onCameraStatus(lastRemoteFrameAt == 0
                 ? "等待远端标注画面，当前为本地预览" : "远端标注画面中断，已显示本地预览");
@@ -600,6 +622,35 @@ public final class WebRtcClient {
             remoteTimedOut = true;
             preferRemote = false;
             updatePreview();
+        }
+    }
+
+    public boolean isExternalDisplayEnabled() {
+        return externalPresentation != null && externalPresentation.isShowing();
+    }
+
+    public String setExternalDisplayEnabled(boolean enabled) {
+        ExternalTrainingPresentation previous = externalPresentation;
+        externalPresentation = null;
+        if (previous != null) previous.dismiss();
+        if (!enabled || destroyed) return "副屏测试已关闭";
+        DisplayManager manager = (DisplayManager) activity.getSystemService(Activity.DISPLAY_SERVICE);
+        Display[] displays = manager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+        if (displays.length == 0) return "未检测到可用于展示的副屏";
+        ExternalTrainingPresentation external = new ExternalTrainingPresentation(
+                activity, displays[0], eglBase.getEglBaseContext());
+        external.setOnDismissListener(dialog -> {
+            if (externalPresentation == external) externalPresentation = null;
+        });
+        try {
+            external.show();
+            external.skeleton.setSession(training == null ? "" : training.optString("session_id"));
+            external.skeleton.setVisibility(!showingRemote && skeletonEnabled ? View.VISIBLE : View.INVISIBLE);
+            externalPresentation = external;
+            return "副屏测试已开启（显示器 " + displays[0].getDisplayId() + "）";
+        } catch (WindowManager.InvalidDisplayException e) {
+            external.dismiss();
+            return "副屏已断开，请重新连接后再试";
         }
     }
 
@@ -761,6 +812,7 @@ public final class WebRtcClient {
         lastRemoteFrameAt = 0;
         skeletonEnabled = false;
         if (skeletonView != null) skeletonView.setSession("");
+        if (externalPresentation != null) externalPresentation.skeleton.setSession("");
         if (!destroyed) {
             updatePreview();
             remoteView.clearImage();
@@ -781,6 +833,7 @@ public final class WebRtcClient {
     public void close() {
         if (destroyed) return;
         destroyed = true;
+        setExternalDisplayEnabled(false);
         previewGeneration++;
         cameraReady = false;
         previewRunning = false;

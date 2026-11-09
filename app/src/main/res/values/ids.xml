@@ -4,4 +4,6 @@
     <item name="login_email" type="id" />
     <item name="login_code" type="id" />
     <item name="login_confirmation" type="id" />
+    <item name="training_screen_angle" type="id" />
+    <item name="training_screen_angle_slider" type="id" />
 </resources>

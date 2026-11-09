@@ -21,6 +21,10 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public final class RehabApiClient {
+    public static int progressCount(JSONObject result) {
+        return result.optInt("progress_count", result.optInt("count"));
+    }
+
     public interface Result { void done(Object data, String error); }
     private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());

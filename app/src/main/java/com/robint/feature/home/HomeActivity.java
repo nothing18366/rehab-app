@@ -6,7 +6,9 @@ import com.robint.data.local.TeachingMediaCache;
 import com.robint.data.remote.RehabApiClient;
 import com.robint.feature.feedback.FeedbackActivity;
 import com.robint.feature.records.TrendsView;
+import com.robint.feature.records.ReviewWorkspace;
 import com.robint.feature.training.TrainingActivity;
+import com.robint.feature.training.TrainingCueAudio;
 import com.robint.media.Subtitles;
 import com.robint.ui.component.IconDrawable;
 import com.robint.ui.component.UiComponents;
@@ -65,6 +67,8 @@ public class HomeActivity extends AppCompatActivity {
     private boolean foreground;
     private boolean creatingRun;
     private String reportToOpen;
+    private ReviewWorkspace reviewWorkspace;
+    private String reviewRunId, reviewReturnPage = "患者管理";
     private JSONObject planDraft;
     private String draftDate;
     private final boolean[] draftDays = new boolean[7];
@@ -85,7 +89,11 @@ public class HomeActivity extends AppCompatActivity {
         title = findViewById(R.id.rehab_page_title);
         notice = findViewById(R.id.rehab_notice);
         patientButton = findViewById(R.id.rehab_patient_button);
-        patientButton.setOnClickListener(v -> { if (!offlineTeaching && SessionStore.staff(this)) choosePatient(); });
+        patientButton.setOnClickListener(v -> {
+            if (offlineTeaching || !SessionStore.staff(this)) return;
+            if (reviewWorkspace == null) choosePatient();
+            else reviewWorkspace.requestLeave(() -> { closeReview(); navigate("患者管理"); choosePatient(); });
+        });
         try (InputStream input = getAssets().open("rehab_actions.json")) {
             byte[] bytes = new byte[input.available()];
             int read = input.read(bytes);
@@ -162,6 +170,8 @@ public class HomeActivity extends AppCompatActivity {
         if (state != null) page = state.getString("page", "训练");
         else if (!offlineTeaching && getIntent().hasExtra("page")) page = getIntent().getStringExtra("page");
         reportToOpen = getIntent().getStringExtra("open_run");
+        reviewRunId = state == null ? getIntent().getStringExtra("review_run_id") : state.getString("review_run_id");
+        if (state != null) reviewReturnPage = state.getString("review_return_page", "患者管理");
     }
 
     @Override protected void onResume() {
@@ -176,6 +186,7 @@ public class HomeActivity extends AppCompatActivity {
         if (!SessionStore.require(this)) return;
         if (!SessionStore.staff(this)) preferences.edit().putString("patient_id", preferences.getString("auth_patient", "")).apply();
         api.get("/api/v1/auth/me", (data, error) -> { if (error != null && foreground) notice.setText(error + "；离线时仅可观看已缓存教学"); });
+        if (reviewWorkspace != null) { reviewWorkspace.resume(); return; }
         refreshPatient();
         String cache = preferences.getString("action_catalog_" + api.base(), "");
         try { if (!cache.isEmpty()) actions = new JSONArray(cache); } catch (Exception ignored) { }
@@ -217,10 +228,11 @@ public class HomeActivity extends AppCompatActivity {
     }
 
     private LinearLayout begin(String heading) {
-        setRequestedOrientation(heading.contains("编辑") || heading.contains("新建") || heading.contains("配置训练") ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
+        setRequestedOrientation(heading.contains("编辑") || heading.contains("新建") || heading.contains("配置训练") || "人工复核".equals(heading) ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
         generation++;
         stopVideo();
         title.setText("康复空间  ›  " + ("训练".equals(heading) ? "今日康复" : heading));
+        notice.setVisibility("人工复核".equals(heading) ? View.GONE : View.VISIBLE);
         notice.setText(patient == null ? "请先选择患者，训练数据将按患者独立保存" :
             patient.optString("code") + " · " + RehabApiClient.side(patient) + "患侧 · 前臂 " + patient.optDouble("forearm_cm") + " cm");
         content.removeAllViews();
@@ -239,6 +251,11 @@ public class HomeActivity extends AppCompatActivity {
     }
 
     private void navigate(String destination) {
+        if (reviewWorkspace != null) {
+            if (!"人工复核".equals(destination)) reviewWorkspace.requestLeave(() -> { closeReview(); navigate(destination); });
+            return;
+        }
+        if ("人工复核".equals(destination) && !"人工复核".equals(page)) reviewReturnPage = page;
         page = destination;
         for (MaterialButton button : navigation) {
             boolean selected = destination.equals(button.getTag());
@@ -255,8 +272,22 @@ public class HomeActivity extends AppCompatActivity {
         else if ("每周日程".equals(page)) showSchedule();
         else if ("设备与服务".equals(page) && SessionStore.staff(this)) showDevice();
         else if ("隐私与使用告知".equals(page)) showPrivacy();
-        else if (SessionStore.staff(this) && ("人工复核".equals(page) || "备份与恢复".equals(page) || "操作日志".equals(page))) showUnconnected(page);
+        else if (SessionStore.staff(this) && "人工复核".equals(page)) showReview();
+        else if (SessionStore.staff(this) && ("备份与恢复".equals(page) || "操作日志".equals(page))) showUnconnected(page);
         else showHome();
+    }
+
+    private void showReview() {
+        if (!SessionStore.require(this)) return;
+        begin("人工复核");
+        content.removeAllViews();
+        reviewWorkspace = new ReviewWorkspace(this, reviewRunId, () -> navigate(reviewReturnPage));
+        content.addView(reviewWorkspace, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void closeReview() {
+        if (reviewWorkspace != null) { reviewWorkspace.close(); reviewWorkspace = null; }
+        reviewRunId = null;
     }
 
     private String pageSubtitle(String heading) {
@@ -495,18 +526,10 @@ public class HomeActivity extends AppCompatActivity {
         body.addView(UiComponents.badge(this, "页面已设计 · 服务暂未接入", true));
         LinearLayout left = UiComponents.card(this), right = UiComponents.card(this);
         UiComponents.split(this, body, left, right, .58f);
-        if ("人工复核".equals(heading)) {
-            left.addView(UiComponents.heading(this, "待复核队列"));
-            left.addView(UiComponents.text(this, "暂无可读取的复核队列", 18, UiComponents.MUTED));
-            UiComponents.tip(this, left, "保留算法原始统计", "训练视频不保存，复核以原始统计、现场观察与记录为依据。");
-            right.addView(UiComponents.heading(this, "填写复核结论"));
-            right.addView(UiComponents.text(this, "选择一条复核记录后，查看关联患者与原始完成 / 合格次数。", 16, UiComponents.MUTED));
-            EditText conclusion = input("人工观察与后续指导", "", false); right.addView(conclusion);
-            MaterialButton submit = UiComponents.button(this, "提交复核结论 · 待接入", true, null); submit.setEnabled(false); right.addView(submit);
-        } else if ("备份与恢复".equals(heading)) {
+        if ("备份与恢复".equals(heading)) {
             left.addView(UiComponents.heading(this, "当前备份状态"));
             UiComponents.value(this, left, "最近备份", "尚未接入"); UiComponents.value(this, left, "数据范围", "患者、计划、训练记录");
-            UiComponents.value(this, left, "训练视频", "不保存");
+            UiComponents.value(this, left, "不合格片段", "独立保存，需与数据库配套备份");
             MaterialButton create = UiComponents.button(this, "创建备份 · 待接入", true, null); create.setEnabled(false); left.addView(create);
             right.addView(UiComponents.heading(this, "恢复前核对"));
             right.addView(UiComponents.text(this, "核对备份时间与记录数量，停止设备训练后再恢复。\n\n当前页面未连接数据库备份或恢复操作。", 17, UiComponents.MUTED));
@@ -525,7 +548,7 @@ public class HomeActivity extends AppCompatActivity {
         LinearLayout body = begin("隐私与使用告知"), card = UiComponents.card(this); body.addView(card);
         String[][] entries = {{"这是训练辅助工具", "用于查看教学、按计划练习和记录动作统计，不替代康复专业人员的诊断与指导。"},
             {"次数不是临床评分", "算法合格次数、需复核和跟踪提示来自既有算法，不单独证明康复疗效。"},
-            {"摄像头与记录", "训练画面在机构局域网内传送用于识别，不保存训练视频；服务保存必要患者资料、计划、统计和主观反馈。"},
+            {"摄像头与记录", "训练画面在机构局域网内传送用于识别。握拳训练可在准备页选择保存不合格片段，默认关闭、无录音；工作人员可复核或删除片段。服务保存必要患者资料、计划、统计、反馈及复核记录。"},
             {"不适时可以停下来", "可以跳过反馈或主动结束。出现新的疼痛、麻木、头晕或其他不适，请停止并联系工作人员。"},
             {"共享设备保护", "结束使用后退出账号。患者只能读取本人记录，工作人员负责档案与计划管理。"}};
         for (int i = 0; i < entries.length; i++) {
@@ -585,7 +608,7 @@ public class HomeActivity extends AppCompatActivity {
         LinearLayout shortcuts = UiComponents.row(this); if (UiComponents.portrait(this)) shortcuts.setOrientation(LinearLayout.VERTICAL); body.addView(shortcuts);
         for (String label : new String[]{"人工复核", "操作日志", "备份与恢复"}) {
             LinearLayout card = UiComponents.card(this); card.addView(UiComponents.text(this, label, 18, UiComponents.INK));
-            card.addView(UiComponents.text(this, "功能界面 · 尚未接入服务", 13, UiComponents.MUTED));
+            card.addView(UiComponents.text(this, "人工复核".equals(label) ? "动作片段、复核结论与康复训练单" : "功能界面 · 尚未接入服务", 13, UiComponents.MUTED));
             card.addView(UiComponents.compact(this, "查看入口", false, v -> navigate(label)));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(UiComponents.portrait(this) ? -1 : 0, -2, UiComponents.portrait(this) ? 0 : 1); params.setMargins(0, 12, 12, 0); shortcuts.addView(card, params);
         }
@@ -1159,7 +1182,10 @@ public class HomeActivity extends AppCompatActivity {
             JSONObject feedback = run.optJSONObject("feedback");
             LinearLayout feelings = UiComponents.card(this); feelings.addView(UiComponents.heading(this, "训练前后感受"));
             feelings.addView(UiComponents.text(this, feedbackText(feedback), 17, UiComponents.INK)); body.addView(feelings);
-            if (SessionStore.staff(this)) body.addView(UiComponents.compact(this, "训练摘要报告", false, v -> showReport(run)));
+            if (SessionStore.staff(this)) {
+                body.addView(UiComponents.compact(this, "训练摘要报告", false, v -> showReport(run)));
+                body.addView(UiComponents.compact(this, "人工复核与康复训练单", true, v -> { reviewRunId = id; navigate("人工复核"); }));
+            }
             if (!"active".equals(run.optString("status"))) body.addView(UiComponents.button(this, "补填或修改训练后感受", false,
                 v -> startActivityForResult(new Intent(this, FeedbackActivity.class).putExtra("run_id", id).putExtra("phase", "post"), 202)));
             body.addView(UiComponents.button(this, "返回训练记录", false, v -> navigate("训练记录")));
@@ -1190,10 +1216,12 @@ public class HomeActivity extends AppCompatActivity {
 
     public static String summaryText(JSONObject summary, double elapsed) {
         if (summary == null) return "尚无识别结果";
+        boolean qualifiedProgress = summary.has("progress_count");
         return String.format(Locale.CHINA,
-            "完成 %d / %d 次   合格 %d 次\n算法合格率 %s   需复核 %d 次\n%s\n实际训练用时 %.1f 秒\n已识别动作累计时长 %.1f 秒 · 单次平均 %.1f 秒",
-            summary.optInt("count"), summary.optInt("target"), summary.optInt("passed"), summary.optInt("count") == 0 ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%（%d/%d）", summary.optDouble("rate"), summary.optInt("passed"), summary.optInt("count")),
-            summary.optInt("review"), summary.optString("detail", ""), elapsed, summary.optDouble("total"), summary.optDouble("avg"));
+            (qualifiedProgress ? "合格 %d / %d 次   已判定 %d 次" : "完成 %d / %d 次   合格 %d 次") + "\n算法合格率 %s   需复核 %d 次\n%s\n实际训练用时 %.1f 秒\n已识别动作累计时长 %.1f 秒 · 单次平均 %.1f 秒",
+            RehabApiClient.progressCount(summary), summary.optInt("target"), summary.optInt(qualifiedProgress ? "count" : "passed"), summary.optInt("count") == 0 ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%（%d/%d）", summary.optDouble("rate"), summary.optInt("passed"), summary.optInt("count")),
+            summary.optInt("review"), summary.optString("detail", ""), elapsed, summary.optDouble("total"), summary.optDouble("avg"))
+            + (qualifiedProgress ? "\n尝试 " + summary.optInt("attempts") + " 次 · 无法判定 " + summary.optInt("unassessable") + " 次" : "");
     }
 
     public static String feedbackText(JSONObject feedback) {
@@ -1321,9 +1349,10 @@ public class HomeActivity extends AppCompatActivity {
         CheckBox voice = new CheckBox(this); voice.setText("播报关键提示与训练结束"); voice.setTextSize(18);
         voice.setChecked(preferences.getBoolean("voice", true));
         voice.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean("voice", checked).apply()); device.addView(voice);
-        boolean missingVoice = preferences.contains("tts_zh_available") && !preferences.getBoolean("tts_zh_available", false);
+        boolean missingVoice = preferences.contains("tts_zh_available") && !preferences.getBoolean("tts_zh_available", false)
+            && !new TrainingCueAudio(this).available();
         device.addView(UiComponents.text(this, missingVoice ? "本机中文语音不可用，请安装中文 TTS 语音包。当前使用文字引导。" :
-            "语音需要设备安装中文 TTS 语音包；不可用时仍可通过文字完成训练。", 18, missingVoice ? UiComponents.DANGER : UiComponents.MUTED));
+            "握拳伸展可用内置普通话提示；其他动态语音需要中文 TTS 语音包。无法播放时保留文字引导。", 18, missingVoice ? UiComponents.DANGER : UiComponents.MUTED));
         device.addView(UiComponents.button(this, "中文语音设置", false, v -> {
             try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
             catch (Exception e) { notice.setText("设备未提供系统语音设置，请联系设备工作人员"); }
@@ -1358,9 +1387,9 @@ public class HomeActivity extends AppCompatActivity {
         if (request == 202) reportToOpen = data != null ? data.getStringExtra("run_id") : null;
     }
     private void stopVideo() { subtitleHandler.removeCallbacksAndMessages(null); if (video != null) { video.stopPlayback(); video = null; } if (media != null) media.cancel(); }
-    @Override protected void onPause() { foreground = false; stopVideo(); super.onPause(); }
-    @Override protected void onSaveInstanceState(Bundle state) { state.putString("page", page); super.onSaveInstanceState(state); }
-    @Override protected void onDestroy() { generation++; api.close(); media.close(); super.onDestroy(); }
-    @Override public void onBackPressed() { if (offlineTeaching) { if (video != null) navigate("动作库"); else finish(); } else if ("训练记录".equals(page) && historyTrends) { if (content.findViewWithTag("training_trends") != null) historyTrends = false; showHistory(); } else if (!"训练".equals(page) || video != null) navigate("训练"); else super.onBackPressed(); }
+    @Override protected void onPause() { foreground = false; stopVideo(); if (reviewWorkspace != null) reviewWorkspace.pause(); super.onPause(); }
+    @Override protected void onSaveInstanceState(Bundle state) { state.putString("page", page); state.putString("review_run_id", reviewRunId); state.putString("review_return_page", reviewReturnPage); super.onSaveInstanceState(state); }
+    @Override protected void onDestroy() { generation++; closeReview(); api.close(); media.close(); super.onDestroy(); }
+    @Override public void onBackPressed() { if (reviewWorkspace != null) navigate(reviewReturnPage); else if (offlineTeaching) { if (video != null) navigate("动作库"); else finish(); } else if ("训练记录".equals(page) && historyTrends) { if (content.findViewWithTag("training_trends") != null) historyTrends = false; showHistory(); } else if (!"训练".equals(page) || video != null) navigate("训练"); else super.onBackPressed(); }
     @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); if (focus) UiComponents.immersive(this); }
 }

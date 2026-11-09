@@ -4,5 +4,7 @@
     <color name="rehab_forest">#173F35</color>
     <color name="rehab_ink">#203C32</color>
     <color name="rehab_muted">#5F7067</color>
+    <color name="rehab_warning">#8A5200</color>
+    <color name="rehab_danger">#B33F3F</color>
     <color name="rehab_background">#F3F5F1</color>
 </resources>

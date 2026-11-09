@@ -193,7 +193,7 @@ public class LoginActivity extends AppCompatActivity {
     private void showInformation(boolean privacy) {
         String title = privacy ? "隐私与使用告知" : "使用帮助";
         String[][] sections = privacy ? new String[][]{
-            {"数据保存与传输", "登录信息与训练数据保存在机构服务端。识别画面经局域网传输，本项目不保存摄像头视频。"},
+            {"数据保存与传输", "登录信息与训练数据保存在机构服务端。识别画面经局域网传输；握拳训练可选择保存不合格片段，默认关闭、无录音，仅工作人员可复核或删除。"},
             {"保护自己的账号", "请使用本人账号，离开共享设备时退出登录。"},
             {"训练辅助，不替代专业指导", "算法反馈不代表临床疗效结论。"}
         } : new String[][]{

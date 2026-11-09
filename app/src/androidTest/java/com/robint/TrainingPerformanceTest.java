@@ -14,6 +14,8 @@ import com.robint.data.remote.RehabApiClient;
 import com.robint.feature.training.TrainingActivity;
 import com.robint.feature.home.HomeActivity;
 import com.robint.rtc.WebRtcClient;
+import com.robint.rtc.SkeletonOverlayView;
+import org.webrtc.SurfaceViewRenderer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -32,6 +34,16 @@ import java.util.function.Predicate;
 import okhttp3.*;
 import static org.junit.Assert.*;
 import static org.junit.Assume.assumeNotNull;
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom;
+import android.widget.SeekBar;
+import androidx.test.espresso.ViewAction;
+import androidx.test.espresso.UiController;
+import android.view.View;
+import org.hamcrest.Matcher;
 
 /** Opt-in only: a dedicated test server on port 18121 and a consenting demonstrator. */
 @RunWith(AndroidJUnit4.class)
@@ -71,6 +83,29 @@ public class TrainingPerformanceTest {
         fail("Training did not become ready");
     }
 
+    private void angleScreenshot(Context context, String name) throws Exception {
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        SystemClock.sleep(250);
+        android.graphics.Bitmap image = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+        File directory = new File(context.getFilesDir(), "benchmarks");
+        assertTrue(directory.isDirectory() || directory.mkdirs());
+        try (FileOutputStream output = new FileOutputStream(new File(directory, name + ".png"))) {
+            assertTrue(image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+        } finally { image.recycle(); }
+    }
+
+    private void selectScreenAngle(int pitch) {
+        onView(withId(R.id.training_screen_angle_slider)).perform(new ViewAction() {
+            @Override public Matcher<View> getConstraints() { return isAssignableFrom(SeekBar.class); }
+            @Override public String getDescription() { return "Select screen angle " + pitch; }
+            @Override public void perform(UiController ui, View view) {
+                SeekBar slider = (SeekBar) view;
+                assertEquals(30, slider.getMax());
+                slider.setProgress(pitch); ui.loopMainThreadUntilIdle();
+            }
+        });
+    }
+
     @Test public void sampleTraining() throws Exception {
         base = InstrumentationRegistry.getArguments().getString("benchmarkUrl");
         assumeNotNull(base);
@@ -78,6 +113,7 @@ public class TrainingPerformanceTest {
         String action = InstrumentationRegistry.getArguments().getString("action", "rub");
         String mode = InstrumentationRegistry.getArguments().getString("mode", "local");
         String label = InstrumentationRegistry.getArguments().getString("label", "baseline");
+        boolean externalDisplay = "true".equals(InstrumentationRegistry.getArguments().getString("externalDisplay"));
         int sampleSeconds = Integer.parseInt(InstrumentationRegistry.getArguments().getString("sampleSeconds", "30"));
         assertTrue(sampleSeconds >= 15 && sampleSeconds <= 60);
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -121,8 +157,53 @@ public class TrainingPerformanceTest {
             Intent intent = new Intent(context, TrainingActivity.class).putExtra("run_id", runId).putExtra("catalog", catalog.toString());
             try (ActivityScenario<TrainingActivity> scenario = ActivityScenario.launch(intent)) {
                 waitFor(scenario, a -> field(a, "rtc") != null && ((WebRtcClient) field(a, "rtc")).isPreviewReady());
+                boolean angleTest = "true".equals(InstrumentationRegistry.getArguments().getString("screenAngle"));
+                if (angleTest) {
+                    waitFor(scenario, a -> !((RehabApplication) a.getApplication()).screenAngle().busy());
+                    angleScreenshot(context, "training-balanced-preparing");
+                    scenario.onActivity(a -> {
+                        assertEquals(10, ((RehabApplication) a.getApplication()).screenAngle().pitch());
+                        assertNull(((RehabApplication) a.getApplication()).screenAngle().error());
+                        a.findViewById(R.id.training_screen_angle).performClick();
+                    });
+                    angleScreenshot(context, "screen-angle-preparing");
+                    for (int pitch : new int[]{0, 30, 17}) {
+                        selectScreenAngle(pitch);
+                        onView(withText("应用角度 " + pitch)).check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                            androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
+                        scenario.onActivity(a -> assertEquals(10, ((RehabApplication) a.getApplication()).screenAngle().pitch()));
+                    }
+                    angleScreenshot(context, "screen-angle-unsent-17");
+                    onView(withText("关闭")).perform(click());
+                    scenario.onActivity(a -> assertEquals(10, ((RehabApplication) a.getApplication()).screenAngle().pitch()));
+                }
+                if (externalDisplay) {
+                    scenario.onActivity(a -> {
+                        assertFalse(((WebRtcClient) field(a, "rtc")).isExternalDisplayEnabled());
+                        a.findViewById(R.id.training_fps).performClick();
+                    });
+                    onView(withText("开启副屏测试")).perform(click());
+                    scenario.onActivity(a -> assertTrue(((WebRtcClient) field(a, "rtc")).isExternalDisplayEnabled()));
+                }
                 scenario.onActivity(a -> invoke(a, "checkAndCountdown"));
                 waitFor(scenario, a -> "training".equals(field(a, "state")));
+                if (angleTest) {
+                    for (int pitch : new int[]{15, 10}) {
+                        scenario.onActivity(a -> a.findViewById(R.id.training_screen_angle).performClick());
+                        selectScreenAngle(pitch);
+                        onView(withText("应用角度 " + pitch)).perform(click());
+                        waitFor(scenario, a -> !((RehabApplication) a.getApplication()).screenAngle().busy());
+                        scenario.onActivity(a -> {
+                            assertEquals(pitch, ((RehabApplication) a.getApplication()).screenAngle().pitch());
+                            assertNull(((RehabApplication) a.getApplication()).screenAngle().error());
+                            assertEquals("training", field(a, "state"));
+                            assertTrue(((WebRtcClient) field(a, "rtc")).isPreviewReady());
+                        });
+                        angleScreenshot(context, "screen-angle-" + pitch);
+                        onView(withText("关闭")).perform(click());
+                    }
+                    angleScreenshot(context, "training-balanced-live");
+                }
                 if ("annotated".equals(mode)) {
                     waitFor(scenario, a -> "annotated".equals(((WebRtcClient) field(a, "rtc")).currentPreview()));
                     scenario.onActivity(a -> {
@@ -154,6 +235,52 @@ public class TrainingPerformanceTest {
                     assertSame(peer, field(rtc, "peer")); assertEquals(identity, field(a, "sessionId"));
                     assertSame(result, field(a, "lastResult")); assertEquals("training", field(a, "state"));
                 });
+                if (externalDisplay) {
+                    CountDownLatch rendered = new CountDownLatch(1);
+                    org.webrtc.EglRenderer.FrameListener frameListener = bitmap -> {
+                        if (bitmap != null) {
+                            assertTrue(bitmap.getWidth() > 0 && bitmap.getHeight() > 0);
+                            bitmap.recycle(); rendered.countDown();
+                        }
+                    };
+                    scenario.onActivity(a -> {
+                        WebRtcClient rtc = (WebRtcClient) field(a, "rtc");
+                        Object peer = field(rtc, "peer"), identity = field(a, "sessionId");
+                        android.app.Presentation old = (android.app.Presentation) field(rtc, "externalPresentation");
+                        rtc.setExternalDisplayEnabled(false);
+                        assertFalse(old.isShowing());
+                        assertFalse(rtc.isExternalDisplayEnabled());
+                        rtc.setExternalDisplayEnabled(true);
+                        assertTrue(rtc.isExternalDisplayEnabled());
+                        assertSame(peer, field(rtc, "peer"));
+                        assertEquals(identity, field(a, "sessionId"));
+                        Object external = field(rtc, "externalPresentation");
+                        SurfaceViewRenderer video = (SurfaceViewRenderer) field(external, "video");
+                        video.addFrameListener(frameListener, 0.25f);
+                    });
+                    assertTrue("Secondary display must render a real video frame", rendered.await(10, TimeUnit.SECONDS));
+                    scenario.onActivity(a -> ((SurfaceViewRenderer) field(field(field(a, "rtc"),
+                            "externalPresentation"), "video")).removeFrameListener(frameListener));
+                    waitFor(scenario, a -> "annotated".equals(mode) || ((SkeletonOverlayView)
+                            field(field(field(a, "rtc"), "externalPresentation"), "skeleton")).sequence() >= 0);
+                    scenario.onActivity(a -> {
+                        WebRtcClient rtc = (WebRtcClient) field(a, "rtc");
+                        SkeletonOverlayView external = (SkeletonOverlayView) field(field(rtc, "externalPresentation"), "skeleton");
+                        SkeletonOverlayView main = a.findViewById(R.id.training_skeleton);
+                        assertEquals(main.sequence(), external.sequence());
+                        assertEquals(main.getVisibility(), external.getVisibility());
+                        SurfaceViewRenderer video = (SurfaceViewRenderer) field(field(rtc, "externalPresentation"), "video");
+                        boolean remote = (boolean) field(rtc, "showingRemote");
+                        int width = (int) field(rtc, remote ? "remoteWidth" : "captureWidth");
+                        int height = (int) field(rtc, remote ? "remoteHeight" : "captureHeight");
+                        if (!remote && (int) field(rtc, "captureRotation") % 180 != 0) {
+                            int swap = width; width = height; height = swap;
+                        }
+                        assertEquals("Portrait display must keep the video aspect ratio", width / (double) height,
+                                video.getWidth() / (double) video.getHeight(), 0.02);
+                        assertEquals("training", field(a, "state"));
+                    });
+                }
                 if ("diagnostic".equals(mode)) {
                     waitFor(scenario, a -> ((WebRtcClient) field(a, "rtc")).hasDiagnosticVideo());
                     scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).toggleDiagnostic());
@@ -197,8 +324,17 @@ public class TrainingPerformanceTest {
                         lastAt = at; lastCpu = cpu;
                         output.write((sample[0].toString() + "\n").getBytes(StandardCharsets.UTF_8));
                     }
-                    scenario.onActivity(a -> ((WebRtcClient) field(a, "rtc")).stopTraining());
+                    AtomicReference<android.app.Presentation> closingDisplay = new AtomicReference<>();
+                    scenario.onActivity(a -> {
+                        WebRtcClient rtc = (WebRtcClient) field(a, "rtc");
+                        if (externalDisplay) closingDisplay.set((android.app.Presentation) field(rtc, "externalPresentation"));
+                        rtc.stopTraining();
+                    });
                     waitFor(scenario, a -> !"training".equals(field(a, "state")));
+                    if (externalDisplay) {
+                        waitFor(scenario, a -> field(a, "rtc") == null);
+                        scenario.onActivity(a -> assertFalse(closingDisplay.get().isShowing()));
+                    }
                     if ("diagnostic".equals(mode)) {
                         waitFor(scenario, a -> "result".equals(field(a, "state")));
                         scenario.onActivity(a -> { invoke(a, "showRest"); invoke(a, "prepareItem"); });

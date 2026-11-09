@@ -1,6 +1,8 @@
 package com.robint.feature.training;
 
 import com.robint.R;
+import com.robint.RehabApplication;
+import com.robint.device.RobotScreenAngle;
 import com.robint.data.local.SessionStore;
 import com.robint.data.remote.RehabApiClient;
 import com.robint.feature.feedback.FeedbackActivity;
@@ -18,13 +20,17 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.ImageView;
+import android.widget.CheckBox;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
+import android.widget.SeekBar;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.Locale;
@@ -34,37 +40,54 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private RehabApiClient api;
     private WebRtcClient rtc;
     private TextToSpeech speech;
+    private TrainingCueAudio cueAudio;
     private boolean speechReady, voice, foreground, permissionRequest, targetAnnounced;
     private boolean flowAbandoned, cameraPermissionDenied, discomfortExit;
+    private boolean recordNonstandard;
     private String state = "loading", runId, sessionId = "", diagnostics = "暂无诊断数据";
     private String dailyPreviewMode, sessionPreviewMode = "keypoints";
-    private String lastSpoken = "", pendingHint = "";
-    private long lastSpeechAt, hintSince, lastResultAt;
+    private String pendingHint = "", pendingAnnouncement = "", announcementState = "", utteranceId = "";
+    private long hintSince, lastResultAt, announcementExpires, utteranceSequence;
+    private boolean speechInFlight;
+    private final TrainingSpeechPolicy speechPolicy = new TrainingSpeechPolicy();
     private JSONObject run, item, patient, teaching, lastResult;
     private JSONArray catalog;
     private int itemIndex, requestGeneration;
-    private TextView countView, passedView, detailView, phaseView, hintView, fpsView, cameraStatus, framing;
+    private TextView countView, passedView, failedView, detailView, phaseView, hintView, fpsView, cameraStatus, framing;
     private MaterialButton primary, preview, mute, diagnosticButton;
     private boolean diagnosticRequested, snapshotPending;
     private LinearLayout controls;
+    private RobotScreenAngle screenAngle;
+    private MaterialButton angleButton;
+    private AlertDialog angleDialog;
+    private Runnable refreshAngleDialog;
+    private final Runnable angleListener = this::updateScreenAngle;
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         UiComponents.immersive(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         api = new RehabApiClient(this);
+        screenAngle = ((RehabApplication) getApplication()).screenAngle();
         runId = getIntent().getStringExtra("run_id");
         dailyPreviewMode = saved == null ? SessionStore.dailyPreviewMode(this) : saved.getString("daily_preview_mode", "keypoints");
         try { catalog = new JSONArray(getIntent().getStringExtra("catalog")); }
         catch (Exception e) { catalog = new JSONArray(); }
         voice = getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("voice", true);
+        cueAudio = new TrainingCueAudio(this);
         speech = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS && speech != null) {
                 int availability = speech.setLanguage(Locale.SIMPLIFIED_CHINESE);
                 speechReady = availability != TextToSpeech.LANG_MISSING_DATA && availability != TextToSpeech.LANG_NOT_SUPPORTED;
-                if (speechReady) speech.setSpeechRate(0.9f);
+                if (speechReady) speech.setSpeechRate(1.0f);
             }
-            getSharedPreferences("rehab", MODE_PRIVATE).edit().putBoolean("tts_zh_available", speechReady).apply();
+            getSharedPreferences("rehab", MODE_PRIVATE).edit().putBoolean("tts_zh_available", speechReady || cueAudio.available()).apply();
+        });
+        speech.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override public void onStart(String id) { }
+            @Override public void onDone(String id) { speechFinished(id); }
+            @Override public void onError(String id) { speechFinished(id); }
+            @Override public void onStop(String id, boolean interrupted) { speechFinished(id); }
         });
         if (saved != null && !saved.getString("session_id", "").isEmpty()) {
             flowAbandoned = true;
@@ -96,28 +119,46 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private void prepareItem() {
         closeCamera();
         state = "preparing";
-        sessionId = ""; lastResult = null; targetAnnounced = false; lastSpoken = ""; pendingHint = "";
+        stopSpeech();
+        sessionId = ""; lastResult = null; targetAnnounced = false; pendingHint = ""; recordNonstandard = false;
         item = run.optJSONArray("items").optJSONObject(itemIndex);
         teaching = teaching(item.optString("action"));
         setContentView(R.layout.activity_training);
+        angleButton = UiComponents.compact(this, "屏幕角度", false, v -> showScreenAngle());
+        angleButton.setId(R.id.training_screen_angle);
+        ((LinearLayout) findViewById(R.id.training_toolbar)).addView(angleButton);
+        updateScreenAngle();
         updateJourney(0);
         ((TextView) findViewById(R.id.training_title)).setText(teaching.optString("name"));
-        ((TextView) findViewById(R.id.training_patient)).setText(patient.optString("name") + " · " + RehabApiClient.side(patient)
+        ((TextView) findViewById(R.id.training_patient)).setText(patient.optString("name")
             + " · " + (itemIndex + 1) + "/" + run.optJSONArray("items").length() + "项");
+        ((TextView) findViewById(R.id.training_side)).setText("患侧 · " + RehabApiClient.side(patient));
+        TextView cooperation = findViewById(R.id.training_cooperation);
+        cooperation.setText(teaching.optString("cooperation"));
+        cooperation.setVisibility(cooperation.length() == 0 ? View.GONE : View.VISIBLE);
         countView = findViewById(R.id.training_count);
         passedView = findViewById(R.id.training_passed);
+        failedView = findViewById(R.id.training_failed);
         detailView = findViewById(R.id.training_detail);
         phaseView = findViewById(R.id.training_phase);
         hintView = findViewById(R.id.training_hint);
         fpsView = findViewById(R.id.training_fps);
         cameraStatus = findViewById(R.id.training_camera_status);
         framing = findViewById(R.id.training_framing);
-        displayCount(0, item.optInt("target_reps"));
-        detailView.setText(teaching.optString("counting"));
+        displayCounts(RehabApiClient.object("count", 0, "passed", 0));
         framing.setText(teaching.optString("framing"));
-        hintView.setText("确认患者、患侧与入镜范围后，点击开始。" + teaching.optString("cooperation"));
+        hintView.setText("确认患者、患侧与入镜范围后，点击开始。\n" + teaching.optString("cooperation"));
         fpsView.setOnClickListener(v -> showDiagnostics());
         controls = findViewById(R.id.training_controls);
+        if ("fist".equals(item.optString("action"))) {
+            CheckBox recording = new CheckBox(this);
+            recording.setText("保存不合格片段（无录音）"); recording.setTextSize(13); recording.setTextColor(UiComponents.INK);
+            recording.setMinHeight(UiComponents.dp(this, 48));
+            recording.setContentDescription("保存不合格动作及前后缓冲，供工作人员复核；本次可选，默认关闭");
+            recording.setButtonTintList(ColorStateList.valueOf(UiComponents.PRIMARY));
+            recording.setOnCheckedChangeListener((button, checked) -> recordNonstandard = checked);
+            controls.addView(recording);
+        }
         primary = UiComponents.button(this, "开始训练", true, v -> checkAndCountdown()); controls.addView(primary);
         controls.addView(UiComponents.button(this, "返回", false, v -> confirmExit()));
         adaptTrainingLayout();
@@ -138,6 +179,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
 
     private void checkAndCountdown() {
         if (!"preparing".equals(state)) return;
+        if (screenAngle.busy()) { hintView.setText("请等待屏幕角度调整完成，再开始训练。"); return; }
         if (rtc == null || !rtc.isPreviewReady()) { hintView.setText("摄像头尚未就绪，请确认权限并等待画面出现"); return; }
         primary.setEnabled(false);
         diagnosticRequested = SessionStore.staff(this) && getSharedPreferences("rehab", MODE_PRIVATE).getBoolean("next_remote_diagnostic", false);
@@ -151,6 +193,9 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             JSONObject capabilities = health.optJSONObject("capabilities");
             String capabilityError = previewCapabilityError(capabilities, sessionPreviewMode);
             if (capabilityError != null) { preparationError(capabilityError); return; }
+            if (recordNonstandard && (capabilities == null || !capabilities.optBoolean("nonstandard_clips_v1"))) {
+                preparationError("服务端尚不支持不合格片段记录，请升级服务端或关闭片段记录"); return;
+            }
             if (!health.optBoolean("model_loaded")) { preparationError("模型尚未就绪，请联系工作人员检查服务"); return; }
             if (health.optBoolean("busy")) { preparationError("另一个设备正在训练，请稍后重试"); return; }
             state = "countdown";
@@ -187,7 +232,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         findViewById(R.id.training_info).setVisibility(View.VISIBLE);
         primary.setText("正在连接"); hintView.setText("正在建立视频连接…");
         int ticket = ++requestGeneration;
-        api.post("/api/v1/sessions", RehabApiClient.object("run_id", runId, "item_index", itemIndex), (data, error) -> {
+        api.post("/api/v1/sessions", RehabApiClient.object("run_id", runId, "item_index", itemIndex, "record_nonstandard", recordNonstandard), (data, error) -> {
             if (error != null) { if (foreground && ticket == requestGeneration) onError(error); return; }
             sessionId = ((JSONObject) data).optString("id");
             if (!foreground || ticket != requestGeneration || !"connecting".equals(state)) { interruptRecord(); return; }
@@ -207,10 +252,12 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             voice = !voice;
             getSharedPreferences("rehab", MODE_PRIVATE).edit().putBoolean("voice", voice).apply();
             mute.setText(voice ? "静音" : "开启语音");
-            if (!voice && speech != null) speech.stop();
+            if (!voice) stopSpeech();
         });
         for (MaterialButton button : new MaterialButton[]{preview, mute}) {
-            button.setLayoutParams(new LinearLayout.LayoutParams(0, UiComponents.dp(this, 56), 1)); switches.addView(button);
+            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, UiComponents.dp(this, 56), 1);
+            if (button == preview) size.setMarginEnd(UiComponents.dp(this, 8));
+            switches.addView(button, size);
         }
         controls.addView(switches);
         diagnosticButton = null;
@@ -224,6 +271,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         MaterialButton safe = UiComponents.button(this, "因不适结束", false, v -> {
             if (!"training".equals(state)) return;
             discomfortExit = true; flowAbandoned = true; state = "finishing";
+            stopSpeech();
             controls.setEnabled(false); primary.setEnabled(false); hintView.setText("已停止动作，正在保存部分结果…");
             rtc.stopForDiscomfort();
             handler.postDelayed(() -> {
@@ -236,22 +284,20 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private void adaptTrainingLayout() {
-        if (getResources().getConfiguration().screenHeightDp >= 600) return;
-        int padding = UiComponents.dp(this, 12);
-        findViewById(R.id.training_root).setPadding(padding, padding, padding, padding);
-        findViewById(R.id.training_info).setPadding(padding, padding, padding, padding);
-        ((TextView) findViewById(R.id.training_title)).setTextSize(18);
-        TextView patientLabel = findViewById(R.id.training_patient); patientLabel.setTextSize(12); patientLabel.setPadding(0, 4, 0, 8);
-        ((TextView) findViewById(R.id.training_count_label)).setTextSize(12);
-        boolean largeText = getResources().getConfiguration().fontScale > 1.2f;
-        countView.setTextSize(largeText ? 34 : 44); passedView.setTextSize(13); detailView.setTextSize(13); phaseView.setTextSize(13);
-        findViewById(R.id.training_count_label).setVisibility(largeText ? View.GONE : View.VISIBLE);
-        TextView journey = findViewById(R.id.training_journey); journey.setTextSize(12); journey.setPadding(0, 0, 0, UiComponents.dp(this, 10));
-        hintView.setTextSize(14); hintView.setPadding(12, 10, 12, 10); framing.setTextSize(13);
-        View progress = findViewById(R.id.training_progress);
-        LinearLayout.LayoutParams progressSize = (LinearLayout.LayoutParams) progress.getLayoutParams();
-        progressSize.topMargin = UiComponents.dp(this, 2); progressSize.bottomMargin = UiComponents.dp(this, 6); progress.setLayoutParams(progressSize);
-        if (controls.getChildCount() == 3 && controls.getChildAt(1) instanceof MaterialButton && controls.getChildAt(2) instanceof MaterialButton) {
+        boolean compact = getResources().getConfiguration().screenHeightDp < 800 || getResources().getConfiguration().fontScale > 1.2f;
+        if (compact) {
+            int padding = UiComponents.dp(this, 12);
+            findViewById(R.id.training_root).setPadding(padding, padding, padding, padding);
+            findViewById(R.id.training_info).setPadding(padding, padding, padding, padding);
+            ((TextView) findViewById(R.id.training_title)).setTextSize(24);
+            TextView patientLabel = findViewById(R.id.training_patient); patientLabel.setTextSize(12); patientLabel.setPadding(0, 4, 0, 0);
+            ((TextView) findViewById(R.id.training_count_label)).setTextSize(14);
+            boolean largeText = getResources().getConfiguration().fontScale > 1.2f;
+            countView.setTextSize(largeText ? 64 : 88); passedView.setTextSize(30); failedView.setTextSize(30); detailView.setTextSize(14); phaseView.setTextSize(14);
+            TextView journey = findViewById(R.id.training_journey); journey.setTextSize(12);
+            hintView.setTextSize(16); hintView.setPadding(12, 10, 12, 10); framing.setTextSize(13);
+        }
+        if (compact && controls.getChildCount() == 3 && controls.getChildAt(1) instanceof MaterialButton && controls.getChildAt(2) instanceof MaterialButton) {
             View first = controls.getChildAt(1), second = controls.getChildAt(2);
             controls.removeView(first); controls.removeView(second);
             LinearLayout actions = UiComponents.row(this);
@@ -260,20 +306,33 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         }
         for (int i = 0; i < controls.getChildCount(); i++) {
             View child = controls.getChildAt(i);
-            if (child instanceof MaterialButton) compactTrainingButton((MaterialButton) child);
+            if (child instanceof MaterialButton) sizeTrainingButton((MaterialButton) child);
             else if (child instanceof LinearLayout) {
                 ((LinearLayout) child).setGravity(android.view.Gravity.TOP);
                 for (int j = 0; j < ((LinearLayout) child).getChildCount(); j++) {
-                    View button = ((LinearLayout) child).getChildAt(j); if (button instanceof MaterialButton) compactTrainingButton((MaterialButton) button);
+                    View button = ((LinearLayout) child).getChildAt(j); if (button instanceof MaterialButton) sizeTrainingButton((MaterialButton) button);
                 }
             }
         }
     }
 
-    private void displayCount(int count, int target) {
-        android.text.SpannableString text = new android.text.SpannableString(count + " / " + target);
-        text.setSpan(new android.text.style.RelativeSizeSpan(.45f), String.valueOf(count).length(), text.length(), 0);
-        countView.setText(text);
+    private void displayCounts(JSONObject data) {
+        int total = data.optInt("count"), passed = data.optInt("passed"), target = item.optInt("target_reps");
+        countView.setText(String.valueOf(total));
+        countView.setContentDescription("完成总次数 " + total + " 次");
+        passedView.setText(String.valueOf(passed)); passedView.setContentDescription("合格次数 " + passed);
+        int failed = Math.max(0, total - passed);
+        failedView.setText(String.valueOf(failed)); failedView.setContentDescription("不合格次数 " + failed);
+        TextView targetLabel = findViewById(R.id.training_target_label);
+        targetLabel.setText("合格目标");
+        android.widget.ProgressBar progress = findViewById(R.id.training_progress);
+        int progressCount = RehabApiClient.progressCount(data);
+        if (!data.has("progress_count") && !"fist".equals(item.optString("action")))
+            targetLabel.setText("完成目标");
+        else progressCount = passed;
+        detailView.setText(progressCount + " / " + target + " 次");
+        progress.setProgress(Math.min(100, progressCount * 100 / Math.max(1, target)));
+        progress.setContentDescription(targetLabel.getText() + " " + detailView.getText());
     }
 
     private void updateJourney(int current) {
@@ -285,15 +344,16 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         ((TextView) findViewById(R.id.training_journey)).setText(text);
     }
 
-    private void compactTrainingButton(MaterialButton button) {
-        button.setTextSize(14); button.setPadding(4, 0, 4, 0); button.setMinWidth(0);
-        button.setMinHeight(UiComponents.dp(this, 48)); button.setMinimumHeight(UiComponents.dp(this, 48));
+    private void sizeTrainingButton(MaterialButton button) {
+        button.setTextSize(18); button.setPadding(4, 0, 4, 0); button.setMinWidth(0);
+        button.setMinHeight(UiComponents.dp(this, 64)); button.setMinimumHeight(UiComponents.dp(this, 64));
         LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) button.getLayoutParams();
-        size.height = UiComponents.dp(this, 48); size.topMargin = UiComponents.dp(this, 4); button.setLayoutParams(size);
+        size.height = UiComponents.dp(this, 64); size.topMargin = UiComponents.dp(this, 8); button.setLayoutParams(size);
     }
 
     private void finishItem() {
         if (!"training".equals(state)) return;
+        stopSpeech();
         state = "finishing"; primary.setEnabled(false); hintView.setText("正在保存训练结果…");
         rtc.stopTraining();
         handler.postDelayed(() -> { if (foreground && "finishing".equals(state)) recoverSummary(0); }, 5000);
@@ -308,25 +368,32 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             state = "training"; updateJourney(1); phaseView.setText("训练中"); liveControls();
             hintView.setText("请按示范开始，保持动作自然、平稳");
             lastResultAt = SystemClock.elapsedRealtime(); handler.postDelayed(watchResults, 1000);
-            speak("训练开始", true);
+            speak("fist".equals(item.optString("action")) ? "轻轻握起，慢慢松开，不舒服就停下" : "训练开始", true);
         } else if ("result".equals(type) && "training".equals(state)) {
             lastResult = data; lastResultAt = SystemClock.elapsedRealtime();
-            int count = data.optInt("count"), target = item.optInt("target_reps");
-            displayCount(count, target);
-            ((android.widget.ProgressBar) findViewById(R.id.training_progress)).setProgress(Math.min(100, count * 100 / Math.max(1, target)));
-            passedView.setText("完成次数 · 合格 " + data.optInt("passed") + " 次");
-            detailView.setText("-".equals(data.optString("detail")) ? teaching.optString("counting") : data.optString("detail", teaching.optString("counting")));
+            int count = RehabApiClient.progressCount(data), target = item.optInt("target_reps");
+            displayCounts(data);
             phaseView.setText(phase(data.optString("phase")) + " · " + data.optString("tracking", "等待跟踪"));
             String hint = primaryHint(data);
             hintView.setText(hint);
+            JSONObject feedback = data.optJSONObject("feedback");
+            String level = feedback == null ? "normal" : feedback.optString("level", "normal");
+            hintView.setTextColor(getResources().getColor("severe".equals(level) ? R.color.rehab_danger
+                : "mild".equals(level) ? R.color.rehab_warning : R.color.rehab_primary));
             fpsView.setText(String.format(Locale.CHINA, "识别 FPS：%.1f", data.optDouble("processed_fps")));
-            if (!hint.equals(pendingHint)) { pendingHint = hint; hintSince = lastResultAt; }
-            else if (lastResultAt - hintSince >= 2000 && !hint.matches(".*[0-9].*")) speak(hint, false);
+            if (feedback != null) {
+                if ("severe".equals(level) && feedback.optBoolean("voice_ready"))
+                    trySpeak(feedback.optString("text"), feedback.optString("code"), false);
+            } else if (!hint.equals(pendingHint)) { pendingHint = hint; hintSince = lastResultAt; }
+            else if (lastResultAt - hintSince >= 2000) speak(hint, false);
             if (count >= target && !targetAnnounced) {
                 targetAnnounced = true;
                 speak("已达到次数目标，可点击结束本项", true);
             }
             if (targetAnnounced) framing.setText("已达到次数目标，请按自身情况点击“结束本项”");
+            JSONObject recording = data.optJSONObject("recording");
+            if (recording != null && recording.optBoolean("enabled")) framing.setText(
+                (targetAnnounced ? "已达到次数目标，请按自身情况结束训练" : teaching.optString("framing")) + "\n片段：" + recording.optString("text"));
         } else if ("summary".equals(type) && ("finishing".equals(state) || "training".equals(state))) {
             showResult(data, "completed".equals(data.optString("status", "completed")));
         } else if ("error".equals(type)) {
@@ -346,6 +413,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     };
 
     private String primaryHint(JSONObject data) {
+        JSONObject feedback = data.optJSONObject("feedback");
+        if (feedback != null && !feedback.optString("text").isEmpty()) return feedback.optString("text");
         String tracking = data.optString("tracking");
         if (!tracking.isEmpty() && !"正常".equals(tracking)) return "跟踪提示：" + tracking;
         String position = data.optString("position_hint");
@@ -387,6 +456,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private LinearLayout document(String heading) {
+        closeAngleDialog(); angleButton = null;
         LinearLayout outer = UiComponents.column(this);
         outer.setBackgroundColor(getResources().getColor(R.color.rehab_background));
         int padding = Math.max(28, (getResources().getConfiguration().screenWidthDp - 1000) / 2);
@@ -407,7 +477,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         LinearLayout body = document(completed ? "本项训练结果" : "训练中断 · 部分结果");
         LinearLayout card = UiComponents.card(this);
         card.addView(UiComponents.heading(this, summary.optString("name", "本次训练")));
-        boolean reached = summary.optInt("count") >= summary.optInt("target", 1);
+        boolean reached = RehabApiClient.progressCount(summary) >= summary.optInt("target", 1);
         card.addView(UiComponents.text(this, reached ? "已达到次数目标" : "未达到次数目标", 22, reached ? UiComponents.PRIMARY : UiComponents.MUTED));
         UiComponents.summary(this, card, summary, summary.optDouble("elapsed_seconds"));
         card.addView(UiComponents.text(this, "合格与复核为算法判定，请结合工作人员指导。", 18, UiComponents.MUTED));
@@ -503,18 +573,53 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private void speak(String text, boolean important) {
-        if (!voice || !speechReady || !foreground || text.isEmpty() || text.equals(lastSpoken)) return;
-        long clock = SystemClock.elapsedRealtime();
-        if (!important && (clock - lastSpeechAt < 8000 || text.equals(teaching == null ? "" : teaching.optString("counting")))) return;
-        lastSpoken = text; lastSpeechAt = clock;
-        speech.speak(text, TextToSpeech.QUEUE_FLUSH, null, "rehab_prompt");
+        if (!important) { trySpeak(text, text, false); return; }
+        if (!voice || !foreground) return;
+        pendingAnnouncement = text; announcementState = state;
+        announcementExpires = SystemClock.elapsedRealtime() + 8000;
+        handler.removeCallbacks(playAnnouncement); handler.post(playAnnouncement);
+    }
+
+    private boolean trySpeak(String text, String code, boolean announcement) {
+        if (!voice || !foreground || text.isEmpty() || (!speechReady && !cueAudio.has(text))
+            || (!announcement && !pendingAnnouncement.isEmpty())) return false;
+        long now = SystemClock.elapsedRealtime();
+        if (!speechPolicy.allows(code, now, speechInFlight || cueAudio.isPlaying() || (speechReady && speech.isSpeaking()), announcement)) return false;
+        String id = "rehab_" + (++utteranceSequence);
+        utteranceId = id; speechInFlight = true;
+        boolean accepted = speechReady ? speech.speak(text, TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.ERROR
+            : cueAudio.play(text, () -> speechFinished(id));
+        if (!accepted) { speechInFlight = false; return false; }
+        speechPolicy.spoken(code, now);
+        return true;
+    }
+
+    private final Runnable playAnnouncement = new Runnable() {
+        @Override public void run() {
+            if (!foreground || !voice || !state.equals(announcementState) || SystemClock.elapsedRealtime() > announcementExpires) {
+                pendingAnnouncement = ""; return;
+            }
+            if (trySpeak(pendingAnnouncement, "notice:" + pendingAnnouncement, true)) pendingAnnouncement = "";
+            else handler.postDelayed(this, 250);
+        }
+    };
+
+    private void speechFinished(String id) {
+        handler.post(() -> { if (id.equals(utteranceId)) speechInFlight = false; });
+    }
+
+    private void stopSpeech() {
+        pendingAnnouncement = ""; utteranceId = ""; speechInFlight = false;
+        handler.removeCallbacks(playAnnouncement);
+        if (cueAudio != null) cueAudio.stop();
+        if (speech != null) speech.stop();
     }
 
     @Override public void onCameraStatus(String message) {
         if (cameraStatus != null && foreground) cameraStatus.setText(message);
         if ("preparing".equals(state) && primary != null && message.contains("已就绪")) {
             primary.setEnabled(true);
-            hintView.setText("确认患者、患侧与入镜范围后，点击开始。" + teaching.optString("cooperation"));
+            hintView.setText("确认患者、患侧与入镜范围后，点击开始。\n" + teaching.optString("cooperation"));
         }
     }
     @Override public void onPreviewChanged(String view, boolean alternateAvailable) {
@@ -536,7 +641,15 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         }
     }
     @Override public void onStats(String message) { diagnostics = message; }
-    private void showDiagnostics() { new AlertDialog.Builder(this).setTitle("实时诊断").setMessage(diagnostics).setPositiveButton("关闭", null).show(); }
+    private void showDiagnostics() {
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("实时诊断")
+                .setMessage(diagnostics).setPositiveButton("关闭", null);
+        if (rtc != null) dialog.setNeutralButton(rtc.isExternalDisplayEnabled() ? "关闭副屏测试" : "开启副屏测试", (d, w) -> {
+            if (rtc != null) android.widget.Toast.makeText(this,
+                    rtc.setExternalDisplayEnabled(!rtc.isExternalDisplayEnabled()), android.widget.Toast.LENGTH_LONG).show();
+        });
+        dialog.show();
+    }
 
     private void showRemoteDiagnostic() {
         if (!SessionStore.staff(this) || rtc == null || !rtc.hasDiagnosticVideo()) return;
@@ -562,6 +675,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     @Override public void onError(String message) {
         if (!foreground) return;
         if ("result".equals(state) || "rest".equals(state) || "overview".equals(state) || "interrupted".equals(state)) return;
+        stopSpeech();
         requestGeneration++;
         if ("preparing".equals(state)) { hintView.setText(message); primary.setEnabled(false); return; }
         if ("finishing".equals(state)) {
@@ -601,8 +715,67 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         } else if (request == 302) { discomfortExit = false; state = "ready_overview"; }
     }
     @Override public void onBackPressed() { confirmExit(); }
+    private void updateScreenAngle() {
+        if (angleButton != null) {
+            angleButton.setText(screenAngle.busy() ? "角度调整中…" : screenAngle.error() != null ? "屏幕角度 · 重试" : "屏幕角度 · " + screenAngle.pitch());
+            angleButton.setEnabled(!screenAngle.busy());
+        }
+        if (refreshAngleDialog != null) refreshAngleDialog.run();
+    }
+
+    private void showScreenAngle() {
+        if (angleDialog != null || screenAngle.busy()) return;
+        int[] selected = {screenAngle.pitch()};
+        LinearLayout body = UiComponents.column(this);
+        int padding = UiComponents.dp(this, 24); body.setPadding(padding, padding, padding, padding);
+        body.addView(UiComponents.heading(this, "屏幕角度"));
+        body.addView(UiComponents.text(this, "选择适合观看的俯仰档位，启动默认 10。\n调整时请暂缓动作，完成后重新确认手部入镜。", 15, UiComponents.MUTED));
+        TextView selection = UiComponents.heading(this, "");
+        selection.setPadding(0, UiComponents.dp(this, 20), 0, UiComponents.dp(this, 8)); body.addView(selection);
+        SeekBar slider = new SeekBar(this);
+        slider.setId(R.id.training_screen_angle_slider);
+        slider.setMax(RobotScreenAngle.MAX_PITCH); slider.setProgress(selected[0]);
+        slider.setContentDescription("屏幕俯仰档位，0 至 30");
+        slider.setThumbTintList(ColorStateList.valueOf(UiComponents.PRIMARY));
+        slider.setProgressTintList(ColorStateList.valueOf(UiComponents.PRIMARY));
+        slider.setProgressBackgroundTintList(ColorStateList.valueOf(UiComponents.MINT));
+        slider.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) view.getParent().requestDisallowInterceptTouchEvent(true);
+            return false;
+        });
+        body.addView(slider, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, 56)));
+        LinearLayout limits = UiComponents.row(this);
+        limits.addView(UiComponents.text(this, "0", 14, UiComponents.MUTED), new LinearLayout.LayoutParams(0, -2, 1));
+        limits.addView(UiComponents.text(this, "30", 14, UiComponents.MUTED)); body.addView(limits);
+        TextView status = UiComponents.text(this, "", 15, UiComponents.PRIMARY);
+        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        status.setPadding(0, UiComponents.dp(this, 16), 0, UiComponents.dp(this, 8)); body.addView(status);
+        MaterialButton apply = UiComponents.button(this, "应用角度", true, v -> screenAngle.apply(selected[0])); body.addView(apply);
+        body.addView(UiComponents.button(this, "关闭", false, v -> angleDialog.dismiss()));
+        refreshAngleDialog = () -> {
+            selection.setText("已选档位 " + selected[0]); slider.setEnabled(!screenAngle.busy());
+            status.setText(screenAngle.status()); status.setTextColor(screenAngle.error() == null ? UiComponents.PRIMARY : UiComponents.DANGER);
+            apply.setText(screenAngle.busy() ? "正在调整…" : "应用角度 " + selected[0]); apply.setEnabled(!screenAngle.busy());
+        };
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar view, int value, boolean fromUser) { selected[0] = value; refreshAngleDialog.run(); }
+            @Override public void onStartTrackingTouch(SeekBar view) { }
+            @Override public void onStopTrackingTouch(SeekBar view) { }
+        });
+        angleDialog = new AlertDialog.Builder(this).setView(UiComponents.scroll(this, body)).create();
+        angleDialog.setOnDismissListener(d -> { angleDialog = null; refreshAngleDialog = null; });
+        refreshAngleDialog.run(); angleDialog.show();
+        if (angleDialog.getWindow() != null) {
+            angleDialog.getWindow().setBackgroundDrawable(UiComponents.background(this, android.graphics.Color.WHITE, 20));
+            angleDialog.getWindow().setLayout(Math.min(UiComponents.dp(this, 480), getResources().getDisplayMetrics().widthPixels - UiComponents.dp(this, 32)), -2);
+        }
+    }
+
+    private void closeAngleDialog() { if (angleDialog != null) angleDialog.dismiss(); }
+
     @Override protected void onResume() {
         super.onResume(); foreground = true; UiComponents.immersive(this);
+        screenAngle.addListener(angleListener);
         if (!SessionStore.require(this)) return;
         if ("ready_to_prepare".equals(state)) prepareItem();
         else if ("ready_overview".equals(state)) showOverview();
@@ -610,6 +783,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         else if ("interrupted".equals(state)) showInterrupted("本次训练已停止，请查询结果或返回重新开始");
     }
     @Override protected void onPause() {
+        screenAngle.removeListener(angleListener); closeAngleDialog();
         foreground = false;
         requestGeneration++;
         handler.removeCallbacksAndMessages(null);
@@ -621,11 +795,12 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             state = "interrupted";
         }
         if (!permissionRequest) closeCamera();
-        if (speech != null) speech.stop();
+        stopSpeech();
         super.onPause();
     }
     @Override protected void onDestroy() {
         handler.removeCallbacksAndMessages(null); closeCamera(); api.close();
+        if (cueAudio != null) cueAudio.stop();
         if (speech != null) { speech.stop(); speech.shutdown(); }
         super.onDestroy();
     }

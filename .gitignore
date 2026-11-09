@@ -9,6 +9,7 @@ local.properties
 .externalNativeBuild/
 .cxx/
 artifacts/
+tools/__pycache__/
 *.apk
 *.jks
 *.keystore

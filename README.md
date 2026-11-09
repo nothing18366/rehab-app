@@ -8,7 +8,7 @@ Java/XML 客户端，提供患者与工作人员登录、计划日程、六动�
 ./gradlew :app:assembleDebug
 ```
 
-构建需 JDK 11 和 Android SDK；应用 ID、签名及本地登录/教学缓存保持现有兼容。机器人 SDK 示例与旧设计截图已清理。
+构建需JDK 11和Android SDK；应用ID、签名及本地登录/教学缓存保持兼容。构建、测试、隔离夹具与界面约定统一见开发文档。
 
 GitHub 仓库为 [nothing18366/rehab-app](https://github.com/nothing18366/rehab-app)，本地文件夹仍可使用 `android-roslift-sdk-demo`。工程显示名为 `rehab-app`，不改变应用 ID。
 
@@ -17,5 +17,8 @@ GitHub 仓库为 [nothing18366/rehab-app](https://github.com/nothing18366/rehab-
 - [使用与账号](docs/usage.md)
 - [结构与命名](docs/architecture.md)
 - [构建、测试与界面约定](docs/development.md)
+- [机器人屏幕角度协议、操作与测试](docs/screen-angle-test.md)
+- [配套后端文档入口](../yolo26-pose-detection/README.md)（同级工作区）
+- [统一后续开发清单](../yolo26-pose-detection/docs/remaining_work.md)（同级工作区）
 
-后端部署与协议见配套服务仓库 docs/deployment.md 和 docs/api.md。人工复核、备份界面、审计和报告导出仍是明确禁用的待接入入口。
+后端部署与协议见配套服务仓库 docs/deployment.md 和 docs/api.md。人工复核已嵌入App原生导航，复用工作人员登录，支持片段时间轴、逐条结论和手填训练单；电脑访问 `/review/` 独立登录。视频保存到后端，不进入APK。存储看板、审核后归档、待审视频保护预警及其他未完成功能统一列入后续开发清单，不在此重复排期。

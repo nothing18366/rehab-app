@@ -149,6 +149,8 @@ public class TrendsView extends LinearLayout {
 
     private void group(JSONObject group, JSONObject response, String key, int index) {
         Context context = getContext(); JSONObject conditions = group.optJSONObject("conditions"); JSONArray points = group.optJSONArray("points");
+        boolean qualifiedProgress = false;
+        for (int i = 0; i < points.length(); i++) qualifiedProgress |= points.optJSONObject(i).has("progress_count");
         LinearLayout card = UiComponents.card(context); results.addView(card);
         LinearLayout head = UiComponents.row(context); card.addView(head);
         head.addView(UiComponents.heading(context, name(key) + " · 目标 " + conditions.optInt("target_reps") + " 次"), new LinearLayout.LayoutParams(0, -2, 1));
@@ -157,13 +159,14 @@ public class TrendsView extends LinearLayout {
             + " · 计划版本 " + conditions.optString("plan_revision", "—"), 14, UiComponents.MUTED));
         LinearLayout metrics = UiComponents.row(context); metrics.setPadding(0, UiComponents.dp(context, 16), 0, UiComponents.dp(context, 16)); card.addView(metrics);
         metric(metrics, "算法合格率", group.isNull("rate") ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%", group.optDouble("rate")));
-        metric(metrics, "合格 / 完成次数", group.optInt("passed") + " / " + group.optInt("count"));
+        metric(metrics, qualifiedProgress ? "合格 / 已判定次数" : "合格 / 完成次数", group.optInt("passed") + " / " + group.optInt("count"));
         metric(metrics, "训练记录（含部分结果）", points.length() + " 次");
         card.addView(UiComponents.text(context, "合格率仅统计正常结束的训练；不同比较组分别展示。", 13, UiComponents.MUTED));
         CountChart chart = new CountChart(context, points, response.optString("start"), response.optString("end"), conditions.optInt("target_reps"));
-        chart.setContentDescription(name(key) + "完成次数趋势。目标 " + conditions.optInt("target_reps") + " 次，共 " + points.length() + " 条记录；具体数值可展开训练明细查看。");
+        String countLabel = qualifiedProgress ? "合格次数" : "完成次数";
+        chart.setContentDescription(name(key) + countLabel + "趋势。目标 " + conditions.optInt("target_reps") + " 次，共 " + points.length() + " 条记录；具体数值可展开训练明细查看。");
         card.addView(chart, new LinearLayout.LayoutParams(-1, UiComponents.dp(context, 220)));
-        card.addView(UiComponents.text(context, "绿色点：正常结束    橙色点：部分结果    横线：目标次数", 13, UiComponents.MUTED));
+        card.addView(UiComponents.text(context, countLabel + "趋势 · 绿色点：正常结束    橙色点：部分结果    横线：目标次数", 13, UiComponents.MUTED));
         LinearLayout detail = UiComponents.column(context);
         detail.addView(UiComponents.text(context, "比较条件：" + RehabApiClient.side(conditions) + " · 前臂 " + conditions.optDouble("forearm_cm") + " cm · 计划版本 "
             + conditions.optString("plan_revision") + "\n算法版本：" + conditions.optString("algorithm_version"), 14, UiComponents.MUTED));
@@ -232,8 +235,9 @@ public class TrendsView extends LinearLayout {
             LinearLayout head = UiComponents.row(getContext()); body.addView(head);
             head.addView(UiComponents.text(getContext(), p.optString("date"), 17, UiComponents.INK), new LinearLayout.LayoutParams(0, -2, 1));
             head.addView(UiComponents.badge(getContext(), p.optBoolean("partial") ? "部分结果" : "正常结束", p.optBoolean("partial")));
-            body.addView(UiComponents.text(getContext(), "完成 " + p.optInt("count") + "/" + p.optInt("target") + " 次 · 用时 " + String.format(Locale.CHINA, "%.1f 秒", p.optDouble("elapsed_seconds")) +
+            body.addView(UiComponents.text(getContext(), (p.has("progress_count") ? "合格 " : "完成 ") + RehabApiClient.progressCount(p) + "/" + p.optInt("target") + " 次 · 用时 " + String.format(Locale.CHINA, "%.1f 秒", p.optDouble("elapsed_seconds")) +
                 " · 算法合格率 " + (p.isNull("rate") ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%（%d/%d）", p.optDouble("rate"), p.optInt("passed"), p.optInt("count"))), 15, UiComponents.INK));
+            if (p.has("progress_count")) body.addView(UiComponents.text(getContext(), "尝试 " + p.optInt("attempts") + " 次 · 无法判定 " + p.optInt("unassessable") + " 次", 14, UiComponents.MUTED));
             body.addView(UiComponents.text(getContext(), HomeActivity.feedbackText(p.optJSONObject("feedback")), 14, UiComponents.MUTED));
             body.addView(UiComponents.compact(getContext(), "查看该次训练详情  →", false, v -> openRun.open(p.optString("run_id"))));
         }
@@ -246,13 +250,13 @@ public class TrendsView extends LinearLayout {
         static long day(String value) { try { SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US); f.setTimeZone(TimeZone.getTimeZone("UTC")); return f.parse(value).getTime() / 86400000; } catch (Exception e) { return 0; } }
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas); float u = getResources().getDisplayMetrics().density, l = 44*u, r = getWidth()-24*u, top = 20*u, bottom = getHeight()-42*u;
-            int max = Math.max(1, target); for (int i = 0; i < points.length(); i++) max = Math.max(max, points.optJSONObject(i).optInt("count"));
+            int max = Math.max(1, target); for (int i = 0; i < points.length(); i++) max = Math.max(max, RehabApiClient.progressCount(points.optJSONObject(i)));
             paint.setTextSize(14*u); paint.setColor(UiComponents.MUTED); paint.setStrokeWidth(u); canvas.drawLine(l, top, l, bottom, paint); canvas.drawLine(l, bottom, r, bottom, paint);
             canvas.drawText(String.valueOf(max), 4*u, top+5*u, paint); canvas.drawText("0", 20*u, bottom, paint);
             float ty = bottom-target*(bottom-top)/max; paint.setColor(0xffb4cbd0); canvas.drawLine(l, ty, r, ty, paint);
             for (int i = 0; i < points.length(); i++) {
                 JSONObject p = points.optJSONObject(i); float x = l+(r-l)*(day(p.optString("date"))-first+0.5f)/Math.max(1,last-first+1);
-                float y = bottom-(bottom-top)*p.optInt("count")/max; paint.setColor(p.optBoolean("partial") ? 0xffcc7d2a : UiComponents.PRIMARY); canvas.drawCircle(x,y,5*u,paint);
+                float y = bottom-(bottom-top)*RehabApiClient.progressCount(p)/max; paint.setColor(p.optBoolean("partial") ? 0xffcc7d2a : UiComponents.PRIMARY); canvas.drawCircle(x,y,5*u,paint);
             }
             paint.setColor(UiComponents.MUTED); SimpleDateFormat f = new SimpleDateFormat("MM-dd", Locale.US); f.setTimeZone(TimeZone.getTimeZone("UTC"));
             canvas.drawText(f.format(new java.util.Date(first*86400000)), l, bottom+25*u, paint); canvas.drawText(f.format(new java.util.Date(last*86400000)), r-50*u, bottom+25*u, paint);

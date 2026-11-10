@@ -136,14 +136,14 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         item = run.optJSONArray("items").optJSONObject(itemIndex);
         teaching = teaching(item.optString("action"));
         setContentView(R.layout.activity_training);
-        angleButton = UiComponents.compact(this, "屏幕角度", false, v -> showScreenAngle());
+        angleButton = trainingButton("屏幕角度", false, v -> showScreenAngle());
         angleButton.setId(R.id.training_screen_angle);
         ((LinearLayout) findViewById(R.id.training_toolbar)).addView(angleButton);
         updateScreenAngle();
         updateJourney(0);
-        ((TextView) findViewById(R.id.training_title)).setText(teaching.optString("name"));
-        ((TextView) findViewById(R.id.training_patient)).setText(patient.optString("name")
-            + " · " + (itemIndex + 1) + "/" + run.optJSONArray("items").length() + "项");
+        ((TextView) findViewById(R.id.training_title)).setText((itemIndex + 1) + " / "
+            + run.optJSONArray("items").length() + "   " + teaching.optString("name"));
+        ((TextView) findViewById(R.id.training_patient)).setText(patient.optString("name"));
         ((TextView) findViewById(R.id.training_side)).setText("患侧 · " + RehabApiClient.side(patient));
         TextView cooperation = findViewById(R.id.training_cooperation);
         cooperation.setText(teaching.optString("cooperation"));
@@ -158,21 +158,25 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         cameraStatus = findViewById(R.id.training_camera_status);
         framing = findViewById(R.id.training_framing);
         displayCounts(RehabApiClient.object("count", 0, "passed", 0));
-        framing.setText(teaching.optString("framing"));
-        hintView.setText("确认患者、患侧与入镜范围后，点击开始。\n" + teaching.optString("cooperation"));
+        hintView.setText(framingInstruction());
         fpsView.setOnClickListener(v -> showDiagnostics());
         controls = findViewById(R.id.training_controls);
+        LinearLayout options = UiComponents.row(this), actions = UiComponents.row(this);
+        controls.addView(options, new LinearLayout.LayoutParams(0, -2, 1));
+        controls.addView(actions);
         if ("fist".equals(item.optString("action"))) {
             CheckBox recording = new CheckBox(this);
-            recording.setText("保存不合格片段（无录音）"); recording.setTextSize(13); recording.setTextColor(UiComponents.INK);
+            recording.setText("保存不合格片段（无录音）"); recording.setTextSize(14); recording.setTextColor(getResources().getColor(R.color.training_text));
+            recording.setBackgroundResource(R.drawable.bg_training_overlay);
+            recording.setPadding(UiComponents.dp(this, 12), 0, UiComponents.dp(this, 16), 0);
             recording.setMinHeight(UiComponents.dp(this, 48));
             recording.setContentDescription("保存不合格动作及前后缓冲，供工作人员复核；本次可选，默认关闭");
-            recording.setButtonTintList(ColorStateList.valueOf(UiComponents.PRIMARY));
+            recording.setButtonTintList(ColorStateList.valueOf(getResources().getColor(R.color.training_mint)));
             recording.setOnCheckedChangeListener((button, checked) -> recordNonstandard = checked);
-            controls.addView(recording);
+            options.addView(recording);
         }
-        primary = UiComponents.button(this, "开始训练", true, v -> checkAndCountdown()); controls.addView(primary);
-        controls.addView(UiComponents.button(this, "返回", false, v -> confirmExit()));
+        actions.addView(trainingButton("返回", false, v -> confirmExit()));
+        primary = trainingButton("开始训练", true, v -> checkAndCountdown()); actions.addView(primary);
         adaptTrainingLayout();
         rtc = new WebRtcClient(this, findViewById(R.id.training_local), findViewById(R.id.training_remote),
                 findViewById(R.id.training_skeleton), this);
@@ -259,28 +263,31 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private void liveControls() {
         controls.removeAllViews();
         LinearLayout switches = UiComponents.row(this);
-        preview = UiComponents.button(this, "本地画面", false, v -> rtc.togglePreview());
-        mute = UiComponents.button(this, voice ? "静音" : "开启语音", false, v -> {
+        preview = trainingButton("本地画面", false, v -> rtc.togglePreview());
+        mute = trainingButton(voice ? "静音" : "开启语音", false, v -> {
             voice = !voice;
             getSharedPreferences("rehab", MODE_PRIVATE).edit().putBoolean("voice", voice).apply();
             mute.setText(voice ? "静音" : "开启语音");
             if (!voice) stopSpeech();
         });
-        for (MaterialButton button : new MaterialButton[]{preview, mute}) {
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, UiComponents.dp(this, 56), 1);
-            if (button == preview) size.setMarginEnd(UiComponents.dp(this, 8));
-            switches.addView(button, size);
-        }
-        controls.addView(switches);
+        switches.addView(preview); switches.addView(mute);
+        MaterialButton info = trainingButton("入镜要求", false, v -> new AlertDialog.Builder(this)
+            .setTitle("入镜要求").setMessage(framingInstruction()).setPositiveButton("关闭", null).show());
+        info.setText(""); info.setIconResource(R.drawable.ic_training_info); info.setIconTint(null);
+        info.setIconPadding(0); info.setContentDescription("查看入镜要求");
+        switches.addView(info);
+        controls.addView(switches, new LinearLayout.LayoutParams(0, -2, 1));
         diagnosticButton = null;
         if (diagnosticRequested && SessionStore.staff(this)) {
-            diagnosticButton = UiComponents.button(this, "工作人员诊断", false, v -> showRemoteDiagnostic());
-            controls.addView(diagnosticButton);
+            diagnosticButton = trainingButton("工作人员诊断", false, v -> showRemoteDiagnostic());
+            switches.addView(diagnosticButton);
         }
         onPreviewChanged(rtc.currentPreview(), rtc.isAnnotatedMode() ? rtc.hasReturnVideo() : rtc.hasDiagnosticVideo());
-        primary = UiComponents.button(this, "结束本项", true, v -> finishItem());
-        primary.setBackgroundTintList(ColorStateList.valueOf(UiComponents.DANGER)); controls.addView(primary);
-        MaterialButton safe = UiComponents.button(this, "因不适结束", false, v -> {
+        LinearLayout actions = UiComponents.row(this);
+        controls.addView(actions);
+        primary = trainingButton("结束本项", false, v -> finishItem());
+        primary.setBackgroundTintList(ColorStateList.valueOf(UiComponents.DANGER));
+        MaterialButton safe = trainingButton("因不适结束\n保存部分结果，结束整次训练", false, v -> {
             if (!"training".equals(state)) return;
             discomfortExit = true; flowAbandoned = true; state = "finishing";
             stopSpeech();
@@ -291,41 +298,55 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
                 api.post("/api/v1/sessions/" + sessionId + "/interrupt", RehabApiClient.object("reason", "user_discomfort"), (data, error) -> { closeCamera(); recoverSummary(0); });
             }, 3000);
         });
-        safe.setTextColor(UiComponents.DANGER); controls.addView(safe);
+        android.text.SpannableString safeLabel = new android.text.SpannableString(safe.getText());
+        safeLabel.setSpan(new android.text.style.RelativeSizeSpan(.65f), safeLabel.toString().indexOf('\n') + 1, safeLabel.length(), 0);
+        safe.setText(safeLabel); safe.setTextColor(getResources().getColor(R.color.training_danger));
+        safe.getLayoutParams().height = LinearLayout.LayoutParams.WRAP_CONTENT;
+        safe.setMinHeight(UiComponents.dp(this, 56)); safe.setMinimumHeight(UiComponents.dp(this, 56));
+        safe.setPadding(safe.getPaddingLeft(), UiComponents.dp(this, 8), safe.getPaddingRight(), UiComponents.dp(this, 8));
+        actions.addView(safe); actions.addView(primary);
+        phaseView.setVisibility(View.VISIBLE);
+        framing.setText(""); framing.setVisibility(View.GONE);
         adaptTrainingLayout();
     }
 
     private void adaptTrainingLayout() {
-        boolean compact = getResources().getConfiguration().screenHeightDp < 800 || getResources().getConfiguration().fontScale > 1.2f;
-        if (compact) {
-            int padding = UiComponents.dp(this, 12);
-            findViewById(R.id.training_root).setPadding(padding, padding, padding, padding);
-            findViewById(R.id.training_info).setPadding(padding, padding, padding, padding);
-            ((TextView) findViewById(R.id.training_title)).setTextSize(24);
-            TextView patientLabel = findViewById(R.id.training_patient); patientLabel.setTextSize(12); patientLabel.setPadding(0, 4, 0, 0);
-            ((TextView) findViewById(R.id.training_count_label)).setTextSize(14);
-            boolean largeText = getResources().getConfiguration().fontScale > 1.2f;
-            countView.setTextSize(largeText ? 64 : 88); passedView.setTextSize(30); failedView.setTextSize(30); detailView.setTextSize(14); phaseView.setTextSize(14);
-            TextView journey = findViewById(R.id.training_journey); journey.setTextSize(12);
-            hintView.setTextSize(16); hintView.setPadding(12, 10, 12, 10); framing.setTextSize(13);
-        }
-        if (compact && controls.getChildCount() == 3 && controls.getChildAt(1) instanceof MaterialButton && controls.getChildAt(2) instanceof MaterialButton) {
-            View first = controls.getChildAt(1), second = controls.getChildAt(2);
-            controls.removeView(first); controls.removeView(second);
-            LinearLayout actions = UiComponents.row(this);
-            LinearLayout.LayoutParams firstSize = new LinearLayout.LayoutParams(0, UiComponents.dp(this, 48), 1); firstSize.setMarginEnd(UiComponents.dp(this, 8));
-            actions.addView(first, firstSize); actions.addView(second, new LinearLayout.LayoutParams(0, UiComponents.dp(this, 48), 1)); controls.addView(actions);
-        }
+        int width = getResources().getConfiguration().screenWidthDp;
+        boolean largeText = getResources().getConfiguration().fontScale > 1.2f;
+        boolean compact = width < 1000 || largeText;
+        boolean shortScreen = getResources().getConfiguration().screenHeightDp < 600;
+        ((TextView) findViewById(R.id.training_title)).setTextSize(compact ? 20 : 26);
+        countView.setMaxWidth(UiComponents.dp(this, compact ? 120 : 108));
+        androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(countView, 32, shortScreen || largeText ? 64 : 96, 2, android.util.TypedValue.COMPLEX_UNIT_SP);
+        passedView.setTextSize(shortScreen ? 36 : 44); failedView.setTextSize(shortScreen ? 36 : 44);
+        findViewById(R.id.training_journey).setVisibility(compact ? View.GONE : View.VISIBLE);
+        FrameLayout.LayoutParams stats = (FrameLayout.LayoutParams) findViewById(R.id.training_stats_group).getLayoutParams();
+        stats.topMargin = UiComponents.dp(this, shortScreen ? 146 : 194);
+        stats.width = UiComponents.dp(this, compact ? 184 : 172);
+        FrameLayout.LayoutParams cue = (FrameLayout.LayoutParams) findViewById(R.id.training_cue).getLayoutParams();
+        cue.width = UiComponents.dp(this, Math.min(largeText ? 560 : 480, Math.max(240, width - (compact ? 440 : 560))));
+        cue.topMargin = UiComponents.dp(this, "preparing".equals(state) ? (shortScreen ? 124 : 140) : 104);
+        hintView.setTextSize(compact ? 20 : 26);
+        LinearLayout goalHeader = (LinearLayout) detailView.getParent();
+        goalHeader.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        TextView targetLabel = findViewById(R.id.training_target_label);
+        targetLabel.setLayoutParams(new LinearLayout.LayoutParams(compact ? -1 : 0, -2, compact ? 0 : 1));
+        findViewById(R.id.training_goal).getLayoutParams().width = UiComponents.dp(this, width < 1000 ? 160 : 220);
+        controls.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         for (int i = 0; i < controls.getChildCount(); i++) {
-            View child = controls.getChildAt(i);
-            if (child instanceof MaterialButton) sizeTrainingButton((MaterialButton) child);
-            else if (child instanceof LinearLayout) {
-                ((LinearLayout) child).setGravity(android.view.Gravity.TOP);
-                for (int j = 0; j < ((LinearLayout) child).getChildCount(); j++) {
-                    View button = ((LinearLayout) child).getChildAt(j); if (button instanceof MaterialButton) sizeTrainingButton((MaterialButton) button);
-                }
-            }
+            LinearLayout group = (LinearLayout) controls.getChildAt(i);
+            group.setGravity(i == 0 ? Gravity.START | Gravity.CENTER_VERTICAL : Gravity.END | Gravity.CENTER_VERTICAL);
+            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(compact ? -1 : i == 0 ? 0 : -2, -2, compact ? 0 : i == 0 ? 1 : 0);
+            size.topMargin = i == 1 && compact ? UiComponents.dp(this, 8) : 0;
+            group.setLayoutParams(size);
         }
+        View statsGroup = findViewById(R.id.training_stats_group), footer = controls;
+        footer.post(() -> {
+            int available = footer.getTop() - statsGroup.getTop() - UiComponents.dp(this, 16);
+            if (available > 0 && statsGroup.getHeight() > available) {
+                statsGroup.getLayoutParams().height = available; statsGroup.requestLayout();
+            }
+        });
     }
 
     private void displayCounts(JSONObject data) {
@@ -351,16 +372,29 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         String[] labels = {"训练准备", "动作练习", "训练小结", "感受记录"};
         android.text.SpannableString text = new android.text.SpannableString("01  训练准备    →    02  动作练习    →    03  训练小结    →    04  感受记录");
         int start = text.toString().indexOf(labels[current]) - 4;
-        text.setSpan(new android.text.style.ForegroundColorSpan(UiComponents.PRIMARY), start, start + 4 + labels[current].length(), 0);
+        text.setSpan(new android.text.style.ForegroundColorSpan(getResources().getColor(R.color.training_mint)), start, start + 4 + labels[current].length(), 0);
         text.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, start + 4 + labels[current].length(), 0);
         ((TextView) findViewById(R.id.training_journey)).setText(text);
     }
 
-    private void sizeTrainingButton(MaterialButton button) {
-        button.setTextSize(18); button.setPadding(4, 0, 4, 0); button.setMinWidth(0);
-        button.setMinHeight(UiComponents.dp(this, 64)); button.setMinimumHeight(UiComponents.dp(this, 64));
+    private MaterialButton trainingButton(String label, boolean accent, View.OnClickListener click) {
+        MaterialButton button = UiComponents.compact(this, label, accent, click);
+        int mint = getResources().getColor(R.color.training_mint), text = getResources().getColor(R.color.training_text);
+        int overlay = getResources().getColor(R.color.training_overlay);
+        int[][] states = {new int[]{-android.R.attr.state_enabled}, new int[]{}};
+        button.setTextColor(new ColorStateList(states, new int[]{getResources().getColor(R.color.training_muted), accent ? UiComponents.FOREST : text}));
+        button.setBackgroundTintList(new ColorStateList(states, new int[]{overlay, accent ? mint : overlay}));
+        button.setRippleColor(ColorStateList.valueOf(0x30ffffff));
+        button.setStrokeColor(ColorStateList.valueOf(getResources().getColor(R.color.training_edge)));
+        button.setTextSize(18); button.setMinWidth(UiComponents.dp(this, 48)); button.setMinimumWidth(UiComponents.dp(this, 48));
         LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) button.getLayoutParams();
-        size.height = UiComponents.dp(this, 64); size.topMargin = UiComponents.dp(this, 8); button.setLayoutParams(size);
+        size.height = UiComponents.dp(this, 56); size.setMargins(UiComponents.dp(this, 4), 0, UiComponents.dp(this, 4), 0);
+        button.setLayoutParams(size);
+        return button;
+    }
+
+    private String framingInstruction() {
+        return teaching.optString("framing", "双手手掌和手指完整入镜");
     }
 
     private void finishItem() {
@@ -390,8 +424,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             hintView.setText(hint);
             JSONObject feedback = data.optJSONObject("feedback");
             String level = feedback == null ? "normal" : feedback.optString("level", "normal");
-            hintView.setTextColor(getResources().getColor("severe".equals(level) ? R.color.rehab_danger
-                : "mild".equals(level) ? R.color.rehab_warning : R.color.rehab_primary));
+            hintView.setTextColor(getResources().getColor("severe".equals(level) ? R.color.training_danger
+                : "mild".equals(level) ? R.color.training_warning : R.color.training_text));
             fpsView.setText(String.format(Locale.CHINA, "识别 FPS：%.1f", data.optDouble("processed_fps")));
             if (feedback != null) {
                 if ("severe".equals(level) && feedback.optBoolean("voice_ready"))
@@ -406,6 +440,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             JSONObject recording = data.optJSONObject("recording");
             if (recording != null && recording.optBoolean("enabled")) framing.setText(
                 (targetAnnounced ? "已达到次数目标，请按自身情况结束训练" : teaching.optString("framing")) + "\n片段：" + recording.optString("text"));
+            framing.setVisibility(framing.length() == 0 ? View.GONE : View.VISIBLE);
         } else if ("summary".equals(type) && ("finishing".equals(state) || "training".equals(state))) {
             showResult(data, "completed".equals(data.optString("status", "completed")));
         } else if ("error".equals(type)) {
@@ -734,7 +769,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         if (cameraStatus != null && foreground) cameraStatus.setText(message);
         if ("preparing".equals(state) && primary != null && message.contains("已就绪")) {
             primary.setEnabled(true);
-            hintView.setText("确认患者、患侧与入镜范围后，点击开始。\n" + teaching.optString("cooperation"));
+            hintView.setText(framingInstruction());
         }
     }
     @Override public void onPreviewChanged(String view, boolean alternateAvailable) {

@@ -19,12 +19,12 @@ public class TrainingProgressBar extends ProgressBar {
         float radius = UiComponents.dp(getContext(), 2), completed = getProgress() / (float) getMax() * 10;
         for (int i = 0; i < 10; i++) {
             float left = i * (width + gap), right = left + width;
-            paint.setColor(UiComponents.MINT);
+            paint.setColor(getProgressBackgroundTintList() == null ? UiComponents.MINT : getProgressBackgroundTintList().getDefaultColor());
             canvas.drawRoundRect(left, 0, right, getHeight(), radius, radius, paint);
             float filled = Math.min(1, Math.max(0, completed - i));
             if (filled > 0) {
                 canvas.save(); canvas.clipRect(left, 0, left + width * filled, getHeight());
-                paint.setColor(UiComponents.PRIMARY);
+                paint.setColor(getProgressTintList() == null ? UiComponents.PRIMARY : getProgressTintList().getDefaultColor());
                 canvas.drawRoundRect(left, 0, right, getHeight(), radius, radius, paint);
                 canvas.restore();
             }

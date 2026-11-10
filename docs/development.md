@@ -1,6 +1,6 @@
 # 构建、测试与界面约定
 
-结构、命名与模块职责统一见 [architecture.md](architecture.md)，操作流程见 [usage.md](usage.md)。本文件只维护构建、测试和界面开发约定。更新日期：2026-11-09。
+结构、命名与模块职责统一见 [architecture.md](architecture.md)，操作流程见 [usage.md](usage.md)。本文件只维护构建、测试和界面开发约定。更新日期：2026-11-10。
 
 ## 构建与兼容
 
@@ -23,10 +23,12 @@ Gradle 当前设置 `abortOnError=false`，构建成功不代表 Lint 或旧设�
 | 本地单元测试 | 骨架映射/时效、日常模式偏好与能力检查、语音冷却、屏幕档位与MQTT响应等；运行 `:app:testDebugUnitTest` |
 | `RehabFlowTest` | 登录、账号/找回、患者/计划、前后反馈、真实RTC、中断、服务错误及教学缓存；需参数 `server` 指向独立临时服务，完整参数以测试代码为准 |
 | `TrainingPerformanceTest` | 显式传入 `benchmarkUrl` 的实体机性能采样；支持 `action=rub/fist`、`mode=local/skeleton/annotated/diagnostic`、`sampleSeconds` 等 |
-| `TrainingPresentationTest` | 显式传入 `uiFixture`，验证训练布局与倒计时；只使用匹配该测试的临时夹具 |
+| `TrainingPresentationTest` | 显式传入 `uiFixture`，验证全屏布局、次数可见性、倒计时、提示色和休息衔接；只使用匹配该测试的临时夹具 |
 | `TrainingVoiceTest` | 仅 `allowPhysicalVoice=true` 时实际播放内置语音 |
 | `ReviewWorkspaceTest` | 仅接受 `reviewFixture=http://127.0.0.1:18123`，验证人工复核嵌入、登录、视频、表单和退出 |
 | `CameraProbeTest` | 明确传入 `cameraId` 的独立硬件采集；不上传、不建训练记录 |
+
+本轮沉浸训练 UI 已在 API 30 模拟器的 1920×1080 / 240dpi 默认字号，以及 213dpi / 150% 字号验证；布局测试包含全屏视频、三位数计次、退出后果文字完整显示和统计/底栏不重叠，骨架测试同时保留副屏 FIT 与主屏 FILL 的坐标检查。夹具使用合成患者与注入结果，不验证真人识别准确率或实体机器人；本轮 Lint 仍报告 HomeActivity、PerformanceStats、themes.xml 中原有的 5 项 NewApi 错误。
 
 所有仪器测试先备份机器人连接、偏好与加密登录，结束后核对恢复。测试自身的finally不能保证外部杀进程时恢复；不要连接正式患者库，不使用真实邮件或把真实令牌写入文档。实体App冷启动会请求屏幕默认档位10，现场应先确认设备可安全调整。
 
@@ -60,7 +62,7 @@ adb -s 机器人IP:端口 reverse --remove tcp:18123
 
 ## 界面开发约定
 
-- 沿用森林绿导航、浅色工作区与白色卡片，固定浅色主题；普通页面横竖屏适配，训练横屏，编辑/复核固定方向保护输入。主要触控至少48dp，主按钮56dp，字号使用sp。
+- 普通页面沿用森林绿导航、浅色工作区与白色卡片，固定浅色主题；训练页使用全屏视频与深色半透明浮层；普通页面横竖屏适配，训练横屏，编辑/复核固定方向保护输入。主要触控至少48dp，主按钮56dp，字号使用sp。
 - 先用布局、层级、间距和清晰的主操作说明流程。避免重复标题、次要标签、slogan、教学段落和每个区块下常驻的辅助小字；重写已有界面时先删冗余，再检查首次使用者是否仍知道点哪里及结果。
 - 必要的补充说明优先用有可访问名称的info图标与tooltip，支持键盘和触屏；仅在确有需要时增加，不为留白新增图标。
 - 保留表单标签、可访问名称、加载/错误/保存反馈。删除、提交永久性变更等操作的后果必须清晰可见，不能只放tooltip。

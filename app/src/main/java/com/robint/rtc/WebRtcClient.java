@@ -169,11 +169,12 @@ public final class WebRtcClient {
         eglBase = EglBase.create();
         localView.init(eglBase.getEglBaseContext(), null);
         localView.setMirror(DISPLAY_MIRROR);
-        localView.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
+        localView.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL);
         remoteView.setZOrderMediaOverlay(true);
         remoteView.init(eglBase.getEglBaseContext(), null);
         remoteView.setMirror(DISPLAY_MIRROR);
-        remoteView.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
+        remoteView.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL);
+        if (skeletonView != null) skeletonView.setAspectFill(true);
         factory = PeerConnectionFactory.builder()
                 .setVideoEncoderFactory(robotSoftwareCodec
                         ? new SoftwareVideoEncoderFactory()

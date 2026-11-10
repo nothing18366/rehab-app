@@ -1,121 +1,95 @@
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/training_root" android:layout_width="match_parent"
-    android:layout_height="match_parent" android:orientation="vertical" android:padding="24dp"
-    android:background="@color/rehab_background">
-    <LinearLayout android:id="@+id/training_toolbar" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical" android:paddingBottom="12dp">
-    <TextView android:id="@+id/training_journey" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-        android:layout_marginEnd="16dp" android:text="01  训练准备    →    02  动作练习    →    03  训练小结    →    04  感受记录"
-        android:textSize="14sp" android:textColor="@color/rehab_muted" />
-    </LinearLayout>
-    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal">
-    <FrameLayout android:layout_width="0dp" android:layout_height="match_parent"
-        android:layout_weight="@integer/rehab_video_weight" android:layout_marginEnd="20dp"
-        android:background="@drawable/bg_surface" android:clipToOutline="true">
-        <org.webrtc.SurfaceViewRenderer android:id="@+id/training_local"
-            android:layout_width="match_parent" android:layout_height="match_parent" android:layout_gravity="center" />
-        <org.webrtc.SurfaceViewRenderer android:id="@+id/training_remote"
-            android:layout_width="match_parent" android:layout_height="match_parent" android:layout_gravity="center" android:visibility="gone" />
-        <com.robint.rtc.SkeletonOverlayView android:id="@+id/training_skeleton"
-            android:layout_width="match_parent" android:layout_height="match_parent" />
-        <TextView android:id="@+id/training_camera_status" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:layout_gravity="top|start" android:visibility="gone"
-            android:layout_margin="12dp" android:background="#CC233B38" android:padding="10dp" android:textSize="14sp"
-            android:textColor="#FFFFFF" android:text="正在打开摄像头" />
-        <TextView android:id="@+id/training_framing" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:layout_gravity="bottom"
-            android:background="#DD233B38" android:padding="16dp" android:textSize="16sp"
-            android:textColor="#FFFFFF" />
-    </FrameLayout>
-    <FrameLayout android:id="@+id/training_panel" android:layout_width="0dp" android:layout_height="match_parent"
-        android:layout_weight="@integer/rehab_info_weight" android:background="@drawable/bg_surface">
-    <LinearLayout android:id="@+id/training_info" android:layout_width="match_parent" android:layout_height="match_parent"
-        android:orientation="vertical" android:padding="24dp">
-        <TextView android:id="@+id/training_title" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textSize="24sp"
-            android:textStyle="bold" android:textColor="@color/rehab_ink" />
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="horizontal" android:layout_marginTop="12dp" android:layout_marginBottom="6dp">
-            <TextView android:id="@+id/training_side" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:paddingLeft="10dp" android:paddingRight="10dp" android:paddingTop="5dp" android:paddingBottom="5dp" android:background="@drawable/bg_training_pass"
-                android:textSize="13sp" android:textColor="@color/rehab_primary" />
-            <TextView android:id="@+id/training_cooperation" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginStart="8dp" android:paddingLeft="10dp" android:paddingRight="10dp" android:paddingTop="5dp" android:paddingBottom="5dp"
-                android:background="@drawable/bg_training_pass" android:textSize="13sp" android:textColor="@color/rehab_primary" />
-        </LinearLayout>
-        <TextView android:id="@+id/training_patient" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textSize="12sp" android:textColor="@color/rehab_muted" />
-        <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
-            android:fillViewport="true">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:gravity="center_vertical" android:paddingTop="16dp" android:paddingBottom="20dp">
-                <TextView android:id="@+id/training_count_label" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="完成总次数" android:gravity="center" android:textSize="14sp" android:textColor="@color/rehab_muted" />
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_horizontal|bottom" android:layout_marginBottom="16dp">
-                    <TextView android:id="@+id/training_count" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="0" android:includeFontPadding="false" android:fontFamily="sans-serif-medium"
-                        android:textSize="96sp" android:textColor="@color/rehab_primary" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="次"
-                        android:layout_marginStart="6dp" android:textSize="16sp" android:textColor="@color/rehab_muted" />
-                </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                    <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                        android:orientation="vertical" android:padding="14dp" android:background="@drawable/bg_training_pass" android:layout_marginEnd="12dp">
-                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="合格次数"
-                            android:drawableStart="@drawable/ic_training_pass" android:drawablePadding="6dp" android:gravity="center_vertical"
-                            android:textSize="13sp" android:textColor="@color/rehab_primary" />
-                        <TextView android:id="@+id/training_passed" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp" android:text="0" android:includeFontPadding="false"
-                            android:fontFamily="sans-serif-medium" android:textSize="32sp" android:textColor="@color/rehab_primary" />
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/training_root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#0E1B17">
+    <org.webrtc.SurfaceViewRenderer android:id="@+id/training_local" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <org.webrtc.SurfaceViewRenderer android:id="@+id/training_remote" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
+    <com.robint.rtc.SkeletonOverlayView android:id="@+id/training_skeleton" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <FrameLayout android:id="@+id/training_panel" android:layout_width="match_parent" android:layout_height="match_parent">
+        <FrameLayout android:id="@+id/training_info" android:layout_width="match_parent" android:layout_height="match_parent">
+            <ScrollView android:id="@+id/training_stats_group" android:layout_width="172dp" android:layout_height="wrap_content"
+                android:layout_marginStart="16dp" android:layout_marginTop="194dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                <LinearLayout android:id="@+id/training_stats" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:gravity="center_horizontal" android:padding="16dp" android:background="@drawable/bg_training_overlay">
+                    <TextView android:id="@+id/training_count_label" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="完成总次数" android:gravity="center" android:textSize="14sp" android:textColor="@color/training_muted" />
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center|bottom">
+                        <TextView android:id="@+id/training_count" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="0" android:maxLines="1" android:includeFontPadding="false" android:fontFamily="sans-serif-light" android:textSize="96sp" android:textColor="@color/training_text" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="次"
+                            android:layout_marginStart="4dp" android:layout_marginBottom="12dp" android:textSize="14sp" android:textColor="@color/training_muted" />
                     </LinearLayout>
-                    <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                        android:orientation="vertical" android:padding="14dp" android:background="@drawable/bg_training_failed">
-                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="不合格次数"
-                            android:drawableStart="@drawable/ic_training_failed" android:drawablePadding="6dp" android:gravity="center_vertical"
-                            android:textSize="13sp" android:textColor="@color/rehab_warning" />
-                        <TextView android:id="@+id/training_failed" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp" android:text="0" android:includeFontPadding="false"
-                            android:fontFamily="sans-serif-medium" android:textSize="32sp" android:textColor="@color/rehab_warning" />
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginTop="8dp" android:layout_marginBottom="12dp" android:background="@color/training_edge" />
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center">
+                            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="合格" android:gravity="center" android:textSize="13sp" android:textColor="@color/training_muted" />
+                            <TextView android:id="@+id/training_passed" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:text="0" android:gravity="center" android:includeFontPadding="false" android:fontFamily="sans-serif-medium" android:textSize="44sp" android:textColor="@color/training_mint" />
+                        </LinearLayout>
+                        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center">
+                            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="不合格" android:gravity="center" android:textSize="13sp" android:textColor="@color/training_muted" />
+                            <TextView android:id="@+id/training_failed" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:text="0" android:gravity="center" android:includeFontPadding="false" android:fontFamily="sans-serif-medium" android:textSize="44sp" android:textColor="@color/training_warning" />
+                        </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="20dp" android:layout_marginBottom="10dp">
-                    <TextView android:id="@+id/training_target_label" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                        android:text="合格目标" android:textSize="14sp" android:textColor="@color/rehab_muted" />
-                    <TextView android:id="@+id/training_detail" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:textSize="14sp" android:textColor="@color/rehab_primary" />
+                <Button android:id="@+id/training_fps" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="16dp"
+                    android:gravity="center" android:background="@drawable/bg_training_overlay_ripple" android:text="识别 FPS：--" android:contentDescription="识别帧率，点击查看诊断"
+                    android:focusable="true" android:textAllCaps="false" android:textSize="13sp" android:textColor="@color/training_text" />
                 </LinearLayout>
-                <com.robint.ui.component.TrainingProgressBar android:id="@+id/training_progress"
-                    android:layout_width="match_parent" android:layout_height="6dp" />
+            </ScrollView>
+            <LinearLayout android:id="@+id/training_goal" android:layout_width="220dp" android:layout_height="wrap_content"
+                android:layout_gravity="top|end" android:layout_marginEnd="24dp" android:layout_marginTop="88dp"
+                android:orientation="vertical" android:padding="18dp" android:background="@drawable/bg_training_overlay">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:id="@+id/training_target_label" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="合格目标" android:textSize="14sp" android:textColor="@color/training_muted" />
+                    <TextView android:id="@+id/training_detail" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="22sp" android:textColor="@color/training_mint" />
+                </LinearLayout>
+                <com.robint.ui.component.TrainingProgressBar android:id="@+id/training_progress" android:layout_width="match_parent" android:layout_height="5dp"
+                    android:layout_marginTop="14dp" android:progressTint="@color/training_mint" android:progressBackgroundTint="@color/training_track" />
             </LinearLayout>
-        </ScrollView>
-        <TextView android:id="@+id/training_phase" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:text="训练准备" android:paddingTop="12dp"
-            android:textSize="14sp" android:textColor="@color/rehab_muted" />
-        <TextView android:id="@+id/training_hint" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:layout_marginTop="8dp" android:padding="14dp" android:background="@drawable/bg_mint"
-            android:gravity="center" android:textSize="18sp" android:textColor="@color/rehab_primary" />
-        <TextView android:id="@+id/training_fps" android:layout_width="match_parent"
-            android:layout_height="48dp" android:gravity="center_vertical" android:text="识别 FPS：--"
-            android:contentDescription="识别帧率，点击查看诊断" android:textSize="13sp" android:textColor="@color/rehab_muted" />
-        <LinearLayout android:id="@+id/training_controls" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:orientation="vertical" />
-    </LinearLayout>
-    <LinearLayout android:id="@+id/training_countdown" android:layout_width="match_parent" android:layout_height="match_parent"
-        android:orientation="vertical" android:gravity="center" android:padding="24dp"
-        android:background="@drawable/bg_mint" android:visibility="gone">
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="准备开始" android:gravity="center" android:textSize="26sp"
-            android:textStyle="bold" android:textColor="@color/rehab_primary" />
-        <TextView android:id="@+id/training_countdown_number" android:layout_width="match_parent"
-            android:layout_height="0dp" android:layout_weight="1" android:gravity="center"
-            android:text="3" android:textSize="144sp" android:fontFamily="sans-serif-medium"
-            android:accessibilityLiveRegion="polite" android:includeFontPadding="false" android:textColor="@color/rehab_primary" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="请保持入镜\n倒计时结束后开始训练" android:gravity="center" android:textSize="18sp"
-            android:textColor="@color/rehab_primary" />
-    </LinearLayout>
+            <LinearLayout android:id="@+id/training_cue" android:layout_width="440dp" android:layout_height="wrap_content"
+                android:layout_gravity="top|center_horizontal" android:layout_marginTop="140dp" android:orientation="vertical" android:padding="18dp" android:background="@drawable/bg_training_overlay">
+                <TextView android:id="@+id/training_hint" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:gravity="center" android:textSize="26sp" android:textColor="@color/training_text" android:accessibilityLiveRegion="polite" />
+                <TextView android:id="@+id/training_phase" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp" android:gravity="center" android:textSize="14sp" android:textColor="@color/training_muted" android:visibility="gone" />
+            </LinearLayout>
+            <TextView android:id="@+id/training_framing" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="104dp" android:maxWidth="600dp" android:padding="14dp"
+                android:background="@drawable/bg_training_overlay" android:gravity="center" android:textSize="16sp" android:textColor="@color/training_text"
+                android:visibility="gone" android:accessibilityLiveRegion="polite" />
+            <LinearLayout android:id="@+id/training_controls" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_gravity="bottom" android:layout_margin="24dp" android:orientation="horizontal" android:gravity="bottom" />
+        </FrameLayout>
+        <FrameLayout android:id="@+id/training_countdown" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#2607140E" android:visibility="gone">
+            <LinearLayout android:layout_width="280dp" android:layout_height="280dp" android:layout_gravity="center"
+                android:orientation="vertical" android:gravity="center" android:background="@drawable/bg_training_countdown">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="准备开始" android:gravity="center" android:textSize="18sp" android:textColor="@color/training_text" />
+                <TextView android:id="@+id/training_countdown_number" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:gravity="center" android:text="3" android:textSize="168sp" android:fontFamily="sans-serif-light" android:accessibilityLiveRegion="polite"
+                    android:includeFontPadding="false" android:textColor="@color/training_mint" />
+            </LinearLayout>
+        </FrameLayout>
+        <LinearLayout android:id="@+id/training_identity" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_margin="24dp" android:orientation="vertical" android:padding="18dp" android:background="@drawable/bg_training_overlay">
+            <TextView android:id="@+id/training_title" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:maxWidth="300dp" android:textSize="26sp" android:textStyle="bold" android:textColor="@color/training_text" />
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:id="@+id/training_patient" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:maxWidth="96dp" android:maxLines="1" android:ellipsize="end" android:textSize="14sp" android:textColor="@color/training_muted" />
+                <TextView android:id="@+id/training_side" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:textSize="14sp" android:textColor="@color/training_muted" />
+                <TextView android:id="@+id/training_cooperation" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:textSize="14sp" android:textColor="@color/training_muted" />
+            </LinearLayout>
+        </LinearLayout>
+        <TextView android:id="@+id/training_journey" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="24dp" android:padding="14dp" android:background="@drawable/bg_training_overlay" android:textSize="12sp" android:textColor="@color/training_muted" />
+        <LinearLayout android:id="@+id/training_toolbar" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="top|end" android:layout_margin="24dp" android:orientation="horizontal" />
+        <TextView android:id="@+id/training_camera_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="168dp" android:maxWidth="560dp"
+            android:background="@drawable/bg_training_overlay" android:padding="12dp" android:textSize="14sp" android:textColor="@color/training_text"
+            android:text="正在打开摄像头" android:visibility="gone" />
     </FrameLayout>
-    </LinearLayout>
-</LinearLayout>
+</FrameLayout>

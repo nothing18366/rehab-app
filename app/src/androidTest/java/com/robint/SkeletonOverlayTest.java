@@ -104,4 +104,22 @@ public class SkeletonOverlayTest {
             pixels.recycle();
         });
     }
+
+    @Test public void coordinatesMatchFullScreenCropMirrorAndPortrait() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            SkeletonOverlayView view = new SkeletonOverlayView(InstrumentationRegistry.getInstrumentation().getTargetContext(), null);
+            view.setSession("test"); view.setAspectFill(true); view.layout(0, 0, 800, 800);
+            view.accept(packet("test", 1, 640, 480), SystemClock.elapsedRealtime(), Double.NaN);
+            Bitmap pixels = Bitmap.createBitmap(800, 800, Bitmap.Config.ARGB_8888);
+            view.draw(new Canvas(pixels));
+            assertTrue(pixels.getPixel(667, 200) != 0);
+            assertEquals(0, pixels.getPixel(600, 250));
+            pixels.eraseColor(0); view.setMirror(false); view.draw(new Canvas(pixels));
+            assertTrue(pixels.getPixel(133, 200) != 0);
+            pixels.eraseColor(0); view.accept(packet("test", 2, 480, 640), SystemClock.elapsedRealtime(), Double.NaN);
+            view.draw(new Canvas(pixels));
+            assertTrue(pixels.getPixel(200, 133) != 0);
+            pixels.recycle();
+        });
+    }
 }

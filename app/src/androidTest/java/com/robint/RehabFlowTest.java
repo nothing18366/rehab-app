@@ -197,7 +197,7 @@ public class RehabFlowTest {
             onView(withId(R.id.training_hint)).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
             onView(withId(R.id.training_count)).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
             onView(withId(R.id.training_phase)).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
-            onView(withText("因不适结束")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
+            onView(withText("因不适结束\n保存部分结果，结束整次训练")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isCompletelyDisplayed()));
             screenshot("training_local");
             onView(withText("本地画面")).perform(click()); SystemClock.sleep(1000); screenshot("training_local_only");
             onView(withText("骨架画面")).perform(click()); onView(withText("结束本项")).perform(click());
@@ -365,8 +365,8 @@ public class RehabFlowTest {
             onView(withTagValue(is("训练"))).perform(click()); waitText("开始今日训练"); clickText("开始今日训练");
             waitText("训练前感受"); clickText("跳过本页"); waitText("开始训练");
             waitCameraReady();
-            onView(withText("开始训练")).perform(click()); waitText("因不适结束"); SystemClock.sleep(1500);
-            onView(withText("因不适结束")).perform(click()); waitText("训练后感受"); screenshot("post_feedback"); clickText("跳过本页");
+            onView(withText("开始训练")).perform(click()); waitText("因不适结束\n保存部分结果，结束整次训练"); SystemClock.sleep(1500);
+            onView(withText("因不适结束\n保存部分结果，结束整次训练")).perform(click()); waitText("训练后感受"); screenshot("post_feedback"); clickText("跳过本页");
             waitText("本次训练汇总"); screenshot("discomfort_summary");
         }
         JSONArray runs = (JSONArray) api("GET", "/training-runs?patient_id=" + me.getString("patient_id"), null);

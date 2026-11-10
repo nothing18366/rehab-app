@@ -7,4 +7,12 @@
     <color name="rehab_warning">#8A5200</color>
     <color name="rehab_danger">#B33F3F</color>
     <color name="rehab_background">#F3F5F1</color>
+    <color name="training_overlay">#C20E1B17</color>
+    <color name="training_edge">#40D8EDD6</color>
+    <color name="training_text">#F4FFF4</color>
+    <color name="training_muted">#DBE9DD</color>
+    <color name="training_mint">#B7FFCF</color>
+    <color name="training_warning">#FFE0B0</color>
+    <color name="training_danger">#FFBABA</color>
+    <color name="training_track">#60758979</color>
 </resources>

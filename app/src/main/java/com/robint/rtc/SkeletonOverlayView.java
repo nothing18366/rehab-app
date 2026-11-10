@@ -31,7 +31,7 @@ public final class SkeletonOverlayView extends View {
     private String sessionId = "";
     private long sequence = -1, receivedAt, expiresAt, updates, timeouts, draws;
     private int imageWidth, imageHeight, sampleCount;
-    private boolean hasPoints, mirror = true;
+    private boolean hasPoints, mirror = true, aspectFill;
     private double ageAtReceive = Double.NaN;
     private final Runnable expire = () -> {
         if (hasPoints && SystemClock.elapsedRealtime() >= expiresAt) {
@@ -58,6 +58,7 @@ public final class SkeletonOverlayView extends View {
     }
 
     public void setMirror(boolean enabled) { mirror = enabled; invalidate(); }
+    public void setAspectFill(boolean enabled) { aspectFill = enabled; invalidate(); }
     public boolean hasSkeleton() { return hasPoints; }
     public long sequence() { return sequence; }
 
@@ -145,7 +146,8 @@ public final class SkeletonOverlayView extends View {
             pendingTiming = null;
         }
         long cpuStarted = Debug.threadCpuTimeNanos();
-        float scale = Math.min(getWidth() / (float) imageWidth, getHeight() / (float) imageHeight);
+        float scaleX = getWidth() / (float) imageWidth, scaleY = getHeight() / (float) imageHeight;
+        float scale = aspectFill ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
         float width = imageWidth * scale, height = imageHeight * scale;
         float left = (getWidth() - width) / 2, top = (getHeight() - height) / 2;
         for (int group = 0; group < points.length; group++) {

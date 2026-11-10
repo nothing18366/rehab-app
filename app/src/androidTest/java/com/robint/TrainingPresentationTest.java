@@ -81,8 +81,8 @@ public class TrainingPresentationTest {
         try {
             preferences.edit().putString("server_url", fixture).putBoolean("voice", false).commit();
             SessionStore.save(context, RehabApiClient.object("token", "ui-fixture", "role", "staff", "expires", System.currentTimeMillis() / 1000 + 3600));
-            JSONArray catalog = new JSONArray().put(RehabApiClient.object("key", "rub", "name", "摩擦手背", "cooperation", "双手配合"))
-                .put(RehabApiClient.object("key", "fist", "name", "握拳伸展", "cooperation", "双手配合"));
+            JSONArray catalog = new JSONArray().put(RehabApiClient.object("key", "rub", "name", "摩擦手背", "cooperation", "双手配合", "framing", "双手手掌和手指完整入镜"))
+                .put(RehabApiClient.object("key", "fist", "name", "握拳伸展", "cooperation", "双手配合", "framing", "双手手掌和手指完整入镜"));
             boolean restVideo = "true".equals(InstrumentationRegistry.getArguments().getString("restVideo"));
             if (restVideo) {
                 okhttp3.OkHttpClient http = new okhttp3.OkHttpClient();
@@ -94,10 +94,18 @@ public class TrainingPresentationTest {
             try (ActivityScenario<TrainingActivity> scenario = ActivityScenario.launch(intent)) {
                 waitFor(scenario, a -> a.findViewById(R.id.training_camera_status) != null
                     && ((TextView) a.findViewById(R.id.training_camera_status)).getText().toString().contains("后置摄像头已就绪"));
+                screenshot(context, "training_ready");
                 scenario.onActivity(a -> {
                     assertEquals(View.GONE, a.findViewById(R.id.training_camera_status).getVisibility());
                     assertNull(text(a.findViewById(android.R.id.content), "切换摄像头"));
                     assertEquals(2, ((ViewGroup) a.findViewById(R.id.training_controls)).getChildCount());
+                    assertEquals(a.findViewById(R.id.training_root).getWidth(), a.findViewById(R.id.training_local).getWidth());
+                    assertEquals(a.findViewById(R.id.training_root).getHeight(), a.findViewById(R.id.training_local).getHeight());
+                    TextView passed = a.findViewById(R.id.training_passed), failed = a.findViewById(R.id.training_failed);
+                    assertEquals(android.view.Gravity.CENTER, passed.getGravity());
+                    assertEquals(android.view.Gravity.CENTER, failed.getGravity());
+                    assertTrue(passed.getTextSize() / a.getResources().getDisplayMetrics().scaledDensity >= 36);
+                    assertTrue(failed.getTextSize() / a.getResources().getDisplayMetrics().scaledDensity >= 36);
                     set(a, "state", "training");
                     set(a, "item", RehabApiClient.object("action", "fist", "target_reps", 5));
                     a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
@@ -111,7 +119,7 @@ public class TrainingPresentationTest {
                     assertEquals("合格目标", ((TextView) a.findViewById(R.id.training_target_label)).getText().toString());
                     assertEquals("3 / 5 次", ((TextView) a.findViewById(R.id.training_detail)).getText().toString());
                     assertEquals(60, ((android.widget.ProgressBar) a.findViewById(R.id.training_progress)).getProgress());
-                    assertEquals(a.getResources().getColor(R.color.rehab_warning), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
+                    assertEquals(a.getResources().getColor(R.color.training_warning), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
                     assertFalse(((TextView) a.findViewById(R.id.training_framing)).getText().toString().contains("已达到"));
                 });
                 screenshot(context, "training_stats_feedback");
@@ -119,10 +127,10 @@ public class TrainingPresentationTest {
                     a.onMessage(RehabApiClient.object("type", "result", "count", 12, "passed", 5, "progress_count", 5,
                         "tracking", "正常", "feedback", RehabApiClient.object("code", "wrist_drift", "level", "severe", "text", "右手手腕偏移较大，请稳住前臂，只活动手指", "voice_ready", true)));
                     assertTrue(((TextView) a.findViewById(R.id.training_framing)).getText().toString().contains("已达到"));
-                    assertEquals(a.getResources().getColor(R.color.rehab_danger), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
+                    assertEquals(a.getResources().getColor(R.color.training_danger), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
                     a.onMessage(RehabApiClient.object("type", "result", "count", 12, "passed", 5, "progress_count", 5,
                         "tracking", "正常", "feedback", RehabApiClient.object("code", "phase", "level", "normal", "text", "准备完成，请慢慢握拳")));
-                    assertEquals(a.getResources().getColor(R.color.rehab_primary), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
+                    assertEquals(a.getResources().getColor(R.color.training_text), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
                     set(a, "state", "preparing"); set(a, "targetAnnounced", false); set(a, "lastResult", null);
                     ((TextView) a.findViewById(R.id.training_framing)).setText("请让患侧肘、腕和完整手指清晰入镜");
                     text(a.findViewById(android.R.id.content), "开始训练").performClick();
@@ -154,6 +162,21 @@ public class TrainingPresentationTest {
                         assertTrue("Statistic must be visible: " + id, view.getGlobalVisibleRect(visible));
                         assertEquals("Statistic must fit without scrolling: " + id, view.getHeight(), visible.height());
                     }
+                    TextView discomfort = text(a.findViewById(android.R.id.content), "因不适结束\n保存部分结果，结束整次训练");
+                    assertNotNull(discomfort);
+                    assertTrue("The exit consequence must not be clipped", discomfort.getLayout().getHeight()
+                        <= discomfort.getHeight() - discomfort.getCompoundPaddingTop() - discomfort.getCompoundPaddingBottom());
+                    android.graphics.Rect stats = new android.graphics.Rect(), footer = new android.graphics.Rect();
+                    a.findViewById(R.id.training_stats_group).getGlobalVisibleRect(stats);
+                    a.findViewById(R.id.training_controls).getGlobalVisibleRect(footer);
+                    assertFalse("Statistics must not overlap the footer", android.graphics.Rect.intersects(stats, footer));
+                    a.onMessage(RehabApiClient.object("type", "result", "count", 123, "passed", 63, "progress_count", 63, "tracking", "正常"));
+                });
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                scenario.onActivity(a -> {
+                    TextView count = a.findViewById(R.id.training_count);
+                    assertEquals(1, count.getLineCount());
+                    assertTrue("Three digit totals must fit", count.getLayout().getLineWidth(0) <= count.getWidth());
                 });
                 scenario.onActivity(a -> { set(a, "requestGeneration", 100); set(a, "itemIndex", 1); invoke(a, "showRest"); });
                 scenario.onActivity(a -> {

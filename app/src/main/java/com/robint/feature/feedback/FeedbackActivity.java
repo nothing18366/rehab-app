@@ -28,7 +28,7 @@ public class FeedbackActivity extends AppCompatActivity {
         LinearLayout outer = UiComponents.column(this); int padding = UiComponents.dp(this, 28); outer.setPadding(padding, padding, padding, padding);
         outer.setBackgroundColor(UiComponents.BACKGROUND);
         UiComponents.journey(this, outer, "pre".equals(phase) ? 0 : 3);
-        UiComponents.section(this, outer, "pre".equals(phase) ? "训练前感受" : "训练后感受", "pre".equals(phase) ? "开始前，先关心一下自己。以下是主观感受，可留空或跳过。" : "这一程辛苦了，记录一下身体现在的感受。");
+        UiComponents.section(this, outer, "pre".equals(phase) ? "训练前感受" : "训练后感受", "选填，可跳过");
         LinearLayout body = UiComponents.card(this), side = UiComponents.column(this), snapshot = UiComponents.card(this);
         side.addView(snapshot); snapshot.addView(UiComponents.heading(this, "本次训练"));
         TextView patient = UiComponents.text(this, "正在读取训练信息…", 17, UiComponents.MUTED); snapshot.addView(patient);

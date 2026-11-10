@@ -4,6 +4,7 @@ import com.robint.R;
 import com.robint.RehabApplication;
 import com.robint.device.RobotScreenAngle;
 import com.robint.data.local.SessionStore;
+import com.robint.data.local.TeachingMediaCache;
 import com.robint.data.remote.RehabApiClient;
 import com.robint.feature.feedback.FeedbackActivity;
 import com.robint.feature.home.HomeActivity;
@@ -28,6 +29,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.ImageView;
 import android.widget.CheckBox;
+import android.widget.FrameLayout;
+import android.widget.VideoView;
+import android.widget.MediaController;
+import android.view.Gravity;
+import android.net.Uri;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import android.widget.SeekBar;
@@ -62,6 +68,10 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     private AlertDialog angleDialog;
     private Runnable refreshAngleDialog;
     private final Runnable angleListener = this::updateScreenAngle;
+    private long restDeadline;
+    private Runnable restTick;
+    private AlertDialog restTeachingDialog;
+    private TeachingMediaCache restMedia;
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -117,6 +127,8 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private void prepareItem() {
+        closeRestTeaching();
+        if (restTick != null) handler.removeCallbacks(restTick);
         closeCamera();
         state = "preparing";
         stopSpeech();
@@ -213,7 +225,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         if (capabilities == null || !capabilities.optBoolean("local_skeleton_v1") || !capabilities.optBoolean("clock_sync_v1"))
             return "服务端尚不支持本地骨架画面，请联系工作人员升级服务端";
         if ("diagnostic".equals(mode) && (!capabilities.optBoolean("diagnostic_video") || !capabilities.optBoolean("diagnostic_png")))
-            return "服务端尚不支持远端诊断，请升级服务端或关闭下一次诊断开关";
+            return "服务端尚不支持远端诊断，请升级服务端或使用日常训练模式";
         return null;
     }
 
@@ -461,7 +473,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         outer.setBackgroundColor(getResources().getColor(R.color.rehab_background));
         int padding = Math.max(28, (getResources().getConfiguration().screenWidthDp - 1000) / 2);
         outer.setPadding(UiComponents.dp(this, padding), UiComponents.dp(this, 28), UiComponents.dp(this, padding), UiComponents.dp(this, 28));
-        UiComponents.section(this, outer, heading, "按自己的节奏，完成每一步。");
+        UiComponents.section(this, outer, heading, "");
         if (patient != null) outer.addView(UiComponents.text(this, patient.optString("name") + " · " + RehabApiClient.side(patient)
             + " · " + patient.optString("code"), 18, UiComponents.MUTED));
         setContentView(UiComponents.scroll(this, outer));
@@ -497,28 +509,131 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     }
 
     private void showRest() {
+        if (restTick != null) handler.removeCallbacks(restTick);
+        closeRestTeaching(); closeAngleDialog(); angleButton = null;
         closeCamera(); state = "rest";
-        LinearLayout body = document("休息一下");
-        UiComponents.tip(this, body, "慢一点，也很好", "放松肩膀和双手。这是建议休息时间，准备好后点击继续。");
         JSONObject next = run.optJSONArray("items").optJSONObject(itemIndex);
-        body.addView(UiComponents.text(this, "下一项：" + teaching(next.optString("action")).optString("name") + " · " + next.optInt("target_reps") + " 次", 24, UiComponents.INK));
-        TextView timer = UiComponents.heading(this, "30 秒"); timer.setTextSize(104); timer.setGravity(android.view.Gravity.CENTER);
-        timer.setMinHeight(UiComponents.dp(this, getResources().getConfiguration().screenHeightDp >= 600 ? 280 : 180));
-        timer.setBackground(UiComponents.background(this, UiComponents.MINT, 24)); timer.setPadding(20, UiComponents.dp(this, 32), 20, UiComponents.dp(this, 32)); body.addView(timer);
-        MaterialButton nextButton = UiComponents.button(this, "跳过休息，进入准备", true, v -> prepareItem()); body.addView(nextButton);
-        body.addView(UiComponents.button(this, "结束本次计划", false, v -> endRun()));
-        long end = SystemClock.elapsedRealtime() + 30000;
-        handler.post(new Runnable() {
+        if (next == null) { showOverview(); return; }
+        JSONObject definition = teaching(next.optString("action"));
+        boolean narrow = getResources().getConfiguration().screenWidthDp < 650;
+        FrameLayout root = new FrameLayout(this); root.setBackgroundColor(UiComponents.BACKGROUND);
+        ImageView backdrop = UiComponents.poster(this, next.optString("action"));
+        backdrop.setAlpha(.06f); backdrop.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        root.addView(backdrop, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout body = UiComponents.column(this);
+        int gutter = UiComponents.dp(this, narrow ? 24 : 40);
+        body.setPadding(gutter, UiComponents.dp(this, 24), gutter, UiComponents.dp(this, 24));
+        LinearLayout header = UiComponents.row(this);
+        header.addView(UiComponents.heading(this, "休息一下"), new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(UiComponents.text(this, "已完成 " + itemIndex + " / " + run.optJSONArray("items").length() + " 项", 16, UiComponents.MUTED));
+        body.addView(header);
+        android.widget.ProgressBar plan = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        plan.setMax(run.optJSONArray("items").length()); plan.setProgress(itemIndex);
+        plan.setProgressTintList(ColorStateList.valueOf(UiComponents.PRIMARY));
+        plan.setProgressBackgroundTintList(ColorStateList.valueOf(UiComponents.MINT));
+        plan.setContentDescription("计划已完成 " + itemIndex + " 项，共 " + plan.getMax() + " 项");
+        LinearLayout.LayoutParams progressSize = new LinearLayout.LayoutParams(-1, UiComponents.dp(this, 6));
+        progressSize.topMargin = UiComponents.dp(this, 16); progressSize.bottomMargin = UiComponents.dp(this, 20);
+        body.addView(plan, progressSize);
+        LinearLayout content = UiComponents.row(this); content.setGravity(Gravity.CENTER_VERTICAL);
+        if (narrow) content.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout previewColumn = UiComponents.column(this);
+        previewColumn.addView(UiComponents.text(this, "倒计时", 18, UiComponents.MUTED));
+        TextView timer = UiComponents.heading(this, "00:30"); timer.setId(R.id.training_rest_timer);
+        timer.setTextSize(narrow ? 72 : 104); timer.setTextColor(UiComponents.PRIMARY);
+        timer.setFontFeatureSettings("tnum"); timer.setContentDescription("休息剩余 30 秒");
+        previewColumn.addView(timer);
+        LinearLayout card = UiComponents.card(this); card.setPadding(0, 0, 0, 0); card.setClipToOutline(true);
+        ImageView poster = UiComponents.poster(this, next.optString("action"));
+        poster.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        poster.setContentDescription("下一动作：" + definition.optString("name") + "，查看动作讲解");
+        card.addView(poster, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, narrow ? 180 : 240)));
+        card.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+            int height = (r - l) * 9 / 16;
+            if (height > 0 && poster.getLayoutParams().height != height) { poster.getLayoutParams().height = height; poster.requestLayout(); }
+        });
+        MaterialButton teachingButton = UiComponents.button(this, "下一动作：" + definition.optString("name") + "  ›", false, v -> showRestTeaching(definition));
+        teachingButton.setId(R.id.training_rest_teaching);
+        teachingButton.setContentDescription("下一动作：" + definition.optString("name") + "，目标 " + next.optInt("target_reps") + " 次，查看动作讲解");
+        poster.setOnClickListener(v -> teachingButton.performClick()); card.addView(teachingButton);
+        previewColumn.addView(card);
+        LinearLayout.LayoutParams previewSize = new LinearLayout.LayoutParams(narrow ? -1 : 0, -2, narrow ? 0 : 1.4f);
+        previewSize.setMarginEnd(narrow ? 0 : UiComponents.dp(this, 64)); content.addView(previewColumn, previewSize);
+        LinearLayout actions = UiComponents.column(this);
+        MaterialButton nextButton = UiComponents.button(this, "跳过休息", true, v -> prepareItem());
+        nextButton.setId(R.id.training_rest_skip); actions.addView(nextButton);
+        MaterialButton add = UiComponents.button(this, "+20 秒", false, v -> {
+            restDeadline = Math.max(restDeadline, SystemClock.elapsedRealtime()) + 20000;
+            handler.removeCallbacks(restTick); restTick.run();
+        }); add.setId(R.id.training_rest_add); actions.addView(add);
+        actions.addView(UiComponents.button(this, "结束本次计划", false, v ->
+            new AlertDialog.Builder(this).setTitle("结束本次计划？")
+                .setMessage("未完成的动作将不再继续，已保存的训练记录会保留。")
+                .setNegativeButton("继续休息", null).setPositiveButton("结束计划", (d, w) -> endRun()).show()));
+        for (int i = 0; i < actions.getChildCount(); i++) {
+            MaterialButton button = (MaterialButton) actions.getChildAt(i);
+            button.setTextSize(22);
+            LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) button.getLayoutParams();
+            size.height = UiComponents.dp(this, 72); size.topMargin = UiComponents.dp(this, 16); button.setLayoutParams(size);
+        }
+        content.addView(actions, new LinearLayout.LayoutParams(narrow ? -1 : 0, -2, narrow ? 0 : 1));
+        body.addView(content); root.addView(UiComponents.scroll(this, body), new FrameLayout.LayoutParams(
+            Math.min(getResources().getDisplayMetrics().widthPixels, UiComponents.dp(this, 1160)), -1, Gravity.CENTER));
+        setContentView(root);
+        restDeadline = SystemClock.elapsedRealtime() + 30000;
+        restTick = new Runnable() {
             @Override public void run() {
                 if (!foreground || !"rest".equals(state)) return;
-                int seconds = Math.max(0, (int) Math.ceil((end - SystemClock.elapsedRealtime()) / 1000.0));
-                timer.setText(seconds > 0 ? seconds + " 秒" : "休息结束");
-                if (seconds > 0) handler.postDelayed(this, 1000); else nextButton.setText("进入下一项准备");
+                int seconds = Math.max(0, (int) Math.ceil((restDeadline - SystemClock.elapsedRealtime()) / 1000.0));
+                timer.setText(String.format(Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60));
+                timer.setContentDescription("休息剩余 " + seconds + " 秒");
+                nextButton.setText(seconds > 0 ? "跳过休息" : "进入下一项准备");
+                if (seconds > 0) handler.postDelayed(this, 250);
             }
-        });
+        }; restTick.run();
     }
 
+    private void showRestTeaching(JSONObject definition) {
+        if (restTeachingDialog != null || !"rest".equals(state)) return;
+        LinearLayout body = UiComponents.column(this);
+        int padding = UiComponents.dp(this, 24); body.setPadding(padding, padding, padding, padding);
+        body.addView(UiComponents.heading(this, definition.optString("name")));
+        VideoView player = new VideoView(this);
+        player.setId(R.id.training_rest_video);
+        body.addView(player, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, 240)));
+        MediaController controller = new MediaController(this); controller.setAnchorView(player); player.setMediaController(controller);
+        TextView status = UiComponents.text(this, "正在读取示范视频…", 14, UiComponents.MUTED); body.addView(status);
+        JSONArray steps = definition.optJSONArray("steps");
+        if (steps != null) for (int i = 0; i < steps.length(); i++) body.addView(UiComponents.text(this, (i + 1) + ". " + steps.optString(i), 16, UiComponents.INK));
+        body.addView(UiComponents.button(this, "返回休息", true, v -> closeRestTeaching()));
+        restTeachingDialog = new AlertDialog.Builder(this).setView(UiComponents.scroll(this, body)).create();
+        restTeachingDialog.setOnDismissListener(d -> {
+            player.stopPlayback(); controller.hide(); restTeachingDialog = null;
+            if (restMedia != null) { restMedia.close(); restMedia = null; }
+        });
+        player.setOnPreparedListener(mp -> { mp.setVolume(0, 0); status.setVisibility(View.GONE); player.start(); });
+        player.setOnErrorListener((mp, what, extra) -> { status.setText("示范视频暂不可用"); status.setVisibility(View.VISIBLE); return true; });
+        restTeachingDialog.show();
+        if (restTeachingDialog.getWindow() != null) {
+            restTeachingDialog.getWindow().setBackgroundDrawable(UiComponents.background(this, android.graphics.Color.WHITE, 20));
+            restTeachingDialog.getWindow().setLayout(Math.min(UiComponents.dp(this, 720), getResources().getDisplayMetrics().widthPixels - UiComponents.dp(this, 32)), -2);
+        }
+        restMedia = new TeachingMediaCache(this);
+        restMedia.video(api.base(), definition, (cached, error) -> {
+            if (restTeachingDialog == null || !foreground || !"rest".equals(state)) return;
+            if (cached == null) { status.setText("示范视频暂不可用"); return; }
+            if (!cached.item.optString("content_version").equals(definition.optString("content_version"))) {
+                status.setText("教学已更新，请在动作库同步后观看"); return;
+            }
+            player.setVideoURI(Uri.fromFile(cached.video));
+            if (error != null) status.setText("使用已缓存示范");
+        }, message -> { });
+    }
+
+    private void closeRestTeaching() { if (restTeachingDialog != null) restTeachingDialog.dismiss(); }
+
     private void showOverview() {
+        closeRestTeaching();
         closeCamera(); state = "overview";
         LinearLayout body = document("本次训练汇总");
         api.get("/api/v1/training-runs/" + runId, (data, error) -> {
@@ -783,6 +898,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         else if ("interrupted".equals(state)) showInterrupted("本次训练已停止，请查询结果或返回重新开始");
     }
     @Override protected void onPause() {
+        closeRestTeaching();
         screenAngle.removeListener(angleListener); closeAngleDialog();
         foreground = false;
         requestGeneration++;
@@ -799,6 +915,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         super.onPause();
     }
     @Override protected void onDestroy() {
+        closeRestTeaching();
         handler.removeCallbacksAndMessages(null); closeCamera(); api.close();
         if (cueAudio != null) cueAudio.stop();
         if (speech != null) { speech.stop(); speech.shutdown(); }

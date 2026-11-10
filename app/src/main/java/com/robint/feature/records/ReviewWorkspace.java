@@ -21,16 +21,20 @@ import org.json.JSONObject;
 
 /** Review content stays inside the existing App navigation and uses its staff session. */
 public class ReviewWorkspace extends LinearLayout {
+    public interface OnPageChanged { void select(String page); }
     private final Activity activity;
     private WebView web;
     private TextView status;
+    private TextView heading;
+    private String page;
     private final String base;
     private boolean ready, closed, leaving;
     private int loginCheck;
 
-    public ReviewWorkspace(Activity owner, String run, Runnable onExit) {
+    public ReviewWorkspace(Activity owner, String run, String initialPage, OnPageChanged onPageChanged, Runnable onExit) {
         super(owner);
         activity = owner;
+        page = initialPage;
         base = owner.getSharedPreferences("rehab", 0).getString("server_url", "");
         setOrientation(VERTICAL);
         setBackgroundColor(UiComponents.BACKGROUND);
@@ -39,16 +43,17 @@ public class ReviewWorkspace extends LinearLayout {
         LinearLayout toolbar = UiComponents.row(owner);
         toolbar.setBaselineAligned(false);
         toolbar.setPadding(0, 0, 0, UiComponents.dp(owner, 24));
-        toolbar.addView(UiComponents.heading(owner, "人工复核"), new LinearLayout.LayoutParams(0, -2, 1));
+        heading = UiComponents.heading(owner, page);
+        toolbar.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
         toolbar.addView(UiComponents.compact(owner, "复制网页地址", false, v -> {
-            ((ClipboardManager) owner.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("康复师工作台", base + "/review/"));
+            ((ClipboardManager) owner.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("康复师工作台", base + "/review/#" + ("康复训练单".equals(page) ? "sheet" : "review")));
             android.widget.Toast.makeText(owner, "网页地址已复制", android.widget.Toast.LENGTH_SHORT).show();
         }));
         toolbar.addView(UiComponents.compact(owner, "返回", false, v -> onExit.run()));
         addView(toolbar);
         status = UiComponents.text(owner, "正在加载…", 14, UiComponents.MUTED);
         addView(status);
-        web = new WebView(owner); web.setContentDescription("人工复核与康复训练单");
+        web = new WebView(owner); web.setContentDescription(page);
         web.setVisibility(View.INVISIBLE);
         addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
         WebSettings settings = web.getSettings();
@@ -71,6 +76,13 @@ public class ReviewWorkspace extends LinearLayout {
             private boolean blocked(String value) { return !trusted(value); }
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) { return blocked(url); }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return blocked(request.getUrl().toString()); }
+            @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
+                if (!trusted(url) || closed) return;
+                String fragment = Uri.parse(url).getFragment();
+                if (!"review".equals(fragment) && !"sheet".equals(fragment)) return;
+                String selected = "sheet".equals(fragment) ? "康复训练单" : "人工复核";
+                if (!selected.equals(page)) onPageChanged.select(selected);
+            }
             @Override public void onPageFinished(WebView view, String url) {
                 if (!trusted(url) || closed || owner.isFinishing()) return;
                 String token = SessionStore.token(owner);
@@ -78,10 +90,10 @@ public class ReviewWorkspace extends LinearLayout {
                 final int check = ++loginCheck;
                 // The desktop login form never appears inside the App, even while authentication is pending.
                 view.evaluateJavascript("var nativeStyle=document.createElement('style');nativeStyle.textContent='#loginScreen{display:none!important}';document.head.append(nativeStyle);"
-                    + "window.__rehabNativeLoginState='loading';"
+                    + "if(window.__rehabNativeLoginState!=='ready'){window.__rehabNativeLoginState='loading';"
                     + "if(window.rehabLogin){Promise.resolve(window.rehabLogin(" + JSONObject.quote(token) + ",true)).then(function(){"
                     + "window.__rehabNativeLoginState=document.getElementById('workspace').hidden?'error':'ready';"
-                    + "},function(){window.__rehabNativeLoginState='error'});}else{window.__rehabNativeLoginState='error'}", null);
+                    + "},function(){window.__rehabNativeLoginState='error'});}else{window.__rehabNativeLoginState='error'}}", null);
                 waitForLogin(check, 0);
             }
             @Override public void onReceivedError(WebView view, int code, String description, String failingUrl) {
@@ -90,7 +102,13 @@ public class ReviewWorkspace extends LinearLayout {
         });
         Uri.Builder target = Uri.parse(base + "/review/").buildUpon().appendQueryParameter("embedded", "1");
         if (run != null && run.matches("[a-f0-9]{32}")) target.appendQueryParameter("run_id", run);
+        target.fragment("康复训练单".equals(page) ? "sheet" : "review");
         web.loadUrl(target.build().toString());
+    }
+
+    public void showPage(String selected) {
+        page = selected; heading.setText(page); web.setContentDescription(page);
+        web.evaluateJavascript("window.rehabShowPage && window.rehabShowPage(" + JSONObject.quote("康复训练单".equals(page) ? "sheet" : "review") + ")", null);
     }
 
     private void waitForLogin(int check, int attempt) {

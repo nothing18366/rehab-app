@@ -95,25 +95,13 @@ public class LoginActivity extends AppCompatActivity {
         brand.addView(brandMark, new LinearLayout.LayoutParams(UiComponents.dp(this, 44), UiComponents.dp(this, 44)));
         LinearLayout brandCopy = UiComponents.column(this); brandCopy.setPadding(UiComponents.dp(this, 12), 0, 0, 0);
         TextView brandName = UiComponents.heading(this, "复健"); brandName.setTextSize(27); brandCopy.addView(brandName);
-        brandCopy.addView(UiComponents.text(this, "R E H A B  T O G E T H E R", 8, UiComponents.MUTED)); brand.addView(brandCopy); intro.addView(brand);
-        TextView eyebrow = UiComponents.text(this, "—  术后康复辅助", 14, UiComponents.PRIMARY);
-        eyebrow.setPadding(0, UiComponents.dp(this, portrait ? 20 : compact ? 24 : 64), 0, UiComponents.dp(this, 16)); intro.addView(eyebrow);
-        TextView title = UiComponents.heading(this, "陪伴每一步，\n让康复更从容。"); title.setTextSize(portrait ? 28 : compact ? 30 : 44); intro.addView(title);
-        TextView description = UiComponents.text(this, "从看懂动作，到完成练习。\n用清晰的指引，陪你认真对待每一次训练。", 16, UiComponents.MUTED);
-        description.setPadding(0, UiComponents.dp(this, 20), 0, UiComponents.dp(this, 24)); intro.addView(description);
+        brand.addView(brandCopy); intro.addView(brand);
+        TextView title = UiComponents.heading(this, "康复训练"); title.setTextSize(portrait ? 28 : compact ? 30 : 44);
+        title.setPadding(0, UiComponents.dp(this, portrait ? 24 : 48), 0, UiComponents.dp(this, 32)); intro.addView(title);
         FrameLayout photoBox = new FrameLayout(this); photoBox.setBackground(UiComponents.background(this, UiComponents.MINT, 16)); photoBox.setClipToOutline(true);
         photoBox.addView(UiComponents.poster(this, "home_hands"), new FrameLayout.LayoutParams(-1, -1));
-        TextView photoLabel = UiComponents.badge(this, "从双手开始，循序练习", false); icon(photoLabel, "hand", 16, UiComponents.PRIMARY);
-        photoLabel.setBackground(UiComponents.background(this, Color.WHITE, 8));
-        FrameLayout.LayoutParams caption = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
-        caption.setMargins(UiComponents.dp(this, 14), 0, 0, UiComponents.dp(this, 14)); photoBox.addView(photoLabel, caption);
         int photoHeight = compact ? 160 : 225;
         if (!portrait) intro.addView(photoBox, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, photoHeight)));
-        TextView steps = UiComponents.text(this, "01  观看示范   —   02  按计划练习   —   03  记录训练", 12, UiComponents.MUTED);
-        steps.setPadding(0, UiComponents.dp(this, 20), 0, UiComponents.dp(this, 20)); if (!portrait) intro.addView(steps);
-        if (!portrait) intro.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1));
-        TextView care = UiComponents.text(this, "以患者为中心，让每一次练习更清晰。", 12, UiComponents.MUTED); icon(care, "shield", 16, UiComponents.MUTED); if (!portrait) intro.addView(care);
-
         LinearLayout top = UiComponents.row(this);
         MaterialButton connection = link(compact ? "连接服务" : "康复训练站 · 连接服务", v -> serverDialog());
         connection.setTag("login_server"); connection.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
@@ -128,8 +116,10 @@ public class LoginActivity extends AppCompatActivity {
         TextView mark = UiComponents.badge(this, "", false); icon(mark, "lock", 24, UiComponents.PRIMARY); form.addView(mark);
         TextView heading = UiComponents.heading(this, resetting ? "找回患者密码" : "欢迎回来"); heading.setTextSize(portrait || compact ? 30 : 36);
         heading.setPadding(0, UiComponents.dp(this, 12), 0, UiComponents.dp(this, 8)); form.addView(heading);
-        TextView subtitle = UiComponents.text(this, resetting ? "验证绑定邮箱后设置新密码，也可联系管理员重置。" : staff ? "登录工作人员账号，继续今天的康复陪伴。" : "使用管理员分配的账号，进入你的康复空间。", 15, UiComponents.MUTED);
-        subtitle.setPadding(0, 0, 0, UiComponents.dp(this, 20)); form.addView(subtitle);
+        if (resetting) {
+            TextView subtitle = UiComponents.text(this, "验证绑定邮箱后设置新密码", 15, UiComponents.MUTED);
+            subtitle.setPadding(0, 0, 0, UiComponents.dp(this, 20)); form.addView(subtitle);
+        }
 
         form.addView(UiComponents.text(this, staff ? "工作人员账号" : emailLogin && !resetting ? "登录邮箱" : "患者账号", 15, UiComponents.INK));
         identity = field(staff ? "工作人员账号" : emailLogin && !resetting ? "已绑定的邮箱" : "管理员分配的患者账号",
@@ -175,14 +165,15 @@ public class LoginActivity extends AppCompatActivity {
         form.addView(submit);
         EditText last = resetting ? confirmation : emailLogin ? code : secret; last.setImeOptions(EditorInfo.IME_ACTION_DONE);
         last.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_DONE) { authenticate(); return true; } return false; });
-        TextView divider = UiComponents.text(this, resetting ? "收不到邮件？请联系管理员核对绑定邮箱" : "——  使用这台训练设备  ——", 12, UiComponents.MUTED);
-        divider.setGravity(Gravity.CENTER); divider.setPadding(0, UiComponents.dp(this, 24), 0, UiComponents.dp(this, 12)); form.addView(divider);
+        if (resetting) {
+            TextView help = UiComponents.text(this, "收不到邮件？请联系管理员核对绑定邮箱", 14, UiComponents.MUTED);
+            help.setPadding(0, UiComponents.dp(this, 24), 0, UiComponents.dp(this, 12)); form.addView(help);
+        }
         form.addView(UiComponents.button(this, resetting ? "返回患者登录" : staff ? "患者训练入口" : "管理员入口", false, v -> {
             if (busy) return; if (!resetting) staff = !staff; resetting = false; emailLogin = false; show();
         }));
         if (!staff && !resetting) {
             form.addView(link(emailLogin ? "使用账号密码登录" : "使用邮箱验证码登录", v -> { if (!busy) { emailLogin = !emailLogin; show(); } }));
-            form.addView(UiComponents.text(this, "账号由管理员分配，无需自行注册。", 12, UiComponents.MUTED));
         }
         if (!getSharedPreferences("rehab", 0).getString("action_catalog_" + api.base(), "").isEmpty())
             form.addView(link("离线查看已缓存教学", v -> startActivity(new Intent(this, HomeActivity.class).putExtra("offline_teaching", true))));

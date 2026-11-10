@@ -125,7 +125,6 @@ public class TrainingPerformanceTest {
             JSONObject login = (JSONObject) request("POST", "/api/v1/auth/staff-login", RehabApiClient.object("username", "admin", "password", "123"));
             token = login.getString("token");
             SessionStore.save(context, login);
-            preferences.edit().putBoolean("next_remote_diagnostic", "diagnostic".equals(mode)).commit();
             JSONObject patient = (JSONObject) request("POST", "/api/v1/patients", RehabApiClient.object("name", "性能测试志愿者", "affected_side", "right", "forearm_cm", 25));
             if ("diagnostic".equals(mode)) {
                 try (ActivityScenario<HomeActivity> settings = ActivityScenario.launch(new Intent(context, HomeActivity.class).putExtra("page", "设备与服务"))) {
@@ -154,6 +153,7 @@ public class TrainingPerformanceTest {
             String runId = run.getString("id");
             request("PUT", "/api/v1/training-runs/" + runId + "/feedback/pre", RehabApiClient.object("state", "skipped"));
             JSONArray catalog = (JSONArray) request("GET", "/api/v1/actions", null);
+            preferences.edit().putBoolean("next_remote_diagnostic", "diagnostic".equals(mode)).commit();
             Intent intent = new Intent(context, TrainingActivity.class).putExtra("run_id", runId).putExtra("catalog", catalog.toString());
             try (ActivityScenario<TrainingActivity> scenario = ActivityScenario.launch(intent)) {
                 waitFor(scenario, a -> field(a, "rtc") != null && ((WebRtcClient) field(a, "rtc")).isPreviewReady());

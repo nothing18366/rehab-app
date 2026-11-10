@@ -83,6 +83,13 @@ public class TrainingPresentationTest {
             SessionStore.save(context, RehabApiClient.object("token", "ui-fixture", "role", "staff", "expires", System.currentTimeMillis() / 1000 + 3600));
             JSONArray catalog = new JSONArray().put(RehabApiClient.object("key", "rub", "name", "摩擦手背", "cooperation", "双手配合"))
                 .put(RehabApiClient.object("key", "fist", "name", "握拳伸展", "cooperation", "双手配合"));
+            boolean restVideo = "true".equals(InstrumentationRegistry.getArguments().getString("restVideo"));
+            if (restVideo) {
+                okhttp3.OkHttpClient http = new okhttp3.OkHttpClient();
+                try (okhttp3.Response response = http.newCall(new okhttp3.Request.Builder().url(fixture + "/api/v1/actions").build()).execute()) {
+                    assertTrue(response.isSuccessful()); catalog = new JSONArray(response.body().string());
+                } finally { http.dispatcher().executorService().shutdown(); }
+            }
             Intent intent = new Intent(context, TrainingActivity.class).putExtra("run_id", "ui-fixture").putExtra("catalog", catalog.toString());
             try (ActivityScenario<TrainingActivity> scenario = ActivityScenario.launch(intent)) {
                 waitFor(scenario, a -> a.findViewById(R.id.training_camera_status) != null
@@ -150,11 +157,43 @@ public class TrainingPresentationTest {
                 });
                 scenario.onActivity(a -> { set(a, "requestGeneration", 100); set(a, "itemIndex", 1); invoke(a, "showRest"); });
                 scenario.onActivity(a -> {
-                    TextView timer = text(a.findViewById(android.R.id.content), "30 秒"); assertNotNull(timer);
+                    TextView timer = a.findViewById(R.id.training_rest_timer); assertEquals("00:30", timer.getText().toString());
                     assertTrue(timer.getTextSize() / a.getResources().getDisplayMetrics().scaledDensity >= 100);
+                    assertEquals("下一动作：摩擦手背  ›", ((TextView) a.findViewById(R.id.training_rest_teaching)).getText().toString());
+                    a.findViewById(R.id.training_rest_add).performClick();
+                    assertEquals("00:50", timer.getText().toString());
+                    // Expiry must wait for confirmation; adding time must restart the stopped timer.
+                    set(a, "restDeadline", SystemClock.elapsedRealtime() - 1000);
+                });
+                waitFor(scenario, a -> "00:00".contentEquals(((TextView) a.findViewById(R.id.training_rest_timer)).getText()));
+                scenario.onActivity(a -> {
+                    assertEquals("进入下一项准备", ((TextView) a.findViewById(R.id.training_rest_skip)).getText().toString());
+                    assertNull(a.findViewById(R.id.training_camera_status));
+                    a.findViewById(R.id.training_rest_add).performClick();
+                    assertEquals("00:20", ((TextView) a.findViewById(R.id.training_rest_timer)).getText().toString());
+                    assertEquals("跳过休息", ((TextView) a.findViewById(R.id.training_rest_skip)).getText().toString());
                 });
                 screenshot(context, "training_rest");
-                scenario.onActivity(a -> text(a.findViewById(android.R.id.content), "跳过休息，进入准备").performClick());
+                scenario.onActivity(a -> text(a.findViewById(android.R.id.content), "结束本次计划").performClick());
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("继续休息"))
+                    .perform(androidx.test.espresso.action.ViewActions.click());
+                scenario.onActivity(a -> a.findViewById(R.id.training_rest_teaching).performClick());
+                if (restVideo) {
+                    waitFor(scenario, a -> {
+                        try {
+                            Field f = TrainingActivity.class.getDeclaredField("restTeachingDialog"); f.setAccessible(true);
+                            android.app.AlertDialog dialog = (android.app.AlertDialog) f.get(a);
+                            return dialog != null && ((android.widget.VideoView) dialog.findViewById(R.id.training_rest_video)).isPlaying();
+                        } catch (Exception e) { throw new AssertionError(e); }
+                    });
+                    screenshot(context, "training_rest_teaching");
+                }
+                androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("返回休息"))
+                    .perform(androidx.test.espresso.action.ViewActions.click());
+                scenario.onActivity(a -> {
+                    assertNotNull(a.findViewById(R.id.training_rest_timer));
+                    a.findViewById(R.id.training_rest_skip).performClick();
+                });
                 waitFor(scenario, a -> a.findViewById(R.id.training_camera_status) != null
                     && ((TextView) a.findViewById(R.id.training_camera_status)).getText().toString().contains("已就绪"));
                 scenario.onActivity(a -> text(a.findViewById(android.R.id.content), "开始训练").performClick());

@@ -202,7 +202,7 @@ public class RehabFlowTest {
             onView(withText("本地画面")).perform(click()); SystemClock.sleep(1000); screenshot("training_local_only");
             onView(withText("骨架画面")).perform(click()); onView(withText("结束本项")).perform(click());
             waitText("本项训练结果"); screenshot("result"); clickText("休息并准备下一项");
-            waitText("休息一下"); screenshot("rest"); clickText("跳过休息，进入准备");
+            waitText("休息一下"); screenshot("rest"); clickText("跳过休息");
             waitText("开始训练"); waitCameraReady();
             onView(withText("开始训练")).perform(click()); waitText("结束本项");
             SystemClock.sleep(1500); onView(withText("结束本项")).perform(click()); waitText("本项训练结果");

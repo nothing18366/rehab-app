@@ -111,6 +111,7 @@ public final class UiComponents {
     }
     public static void section(Context context, LinearLayout body, String heading, String subtitle) {
         TextView title = heading(context, heading); title.setTextSize(portrait(context) ? 26 : 32); body.addView(title);
+        if (subtitle.isEmpty()) { title.setPadding(0, 0, 0, dp(context, 24)); return; }
         TextView sub = text(context, subtitle, 15, MUTED);
         sub.setPadding(0, dp(context, 9), 0, dp(context, 26)); body.addView(sub);
     }

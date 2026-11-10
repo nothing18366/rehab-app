@@ -52,6 +52,8 @@ adb -s 机器人IP:端口 reverse --remove tcp:18123
 
 配套后端 `tests/rtc_fixture.py` 使用临时库与固定18121端口；采样与汇总由后端 `tools/benchmark_robot.py`、`tools/compare_benchmarks.py` 执行。采样前15秒预热，默认30秒有效窗口，App原始记录位于 `files/benchmarks/`；不要同时构建或运行离线推理抢占资源。
 
+日常设置页不提供一次性远端诊断开关；`TrainingPerformanceTest` 在启动训练前显式写入测试标志，主界面会清除遗留开关。
+
 `testReturnPause=true` 仅适用于带暂停/恢复端点的独立夹具，用于远端断流回退/手动恢复；`screenAngle=true` 会额外实际移动屏幕，只在现场明确安排时启用。命令、协议与机械边界见 [screen-angle-test.md](screen-angle-test.md)。
 
 性能记录中RTT、解码→首次Canvas绘制估计与物理画面延迟是不同量，未校准值保留null。出现系统外部强停时，应区分采样完成与完整JUnit通过。相机彩条、无真人或合成片段只证明链路和界面，不证明动作准确率；计时定义与历史数据见配套后端 `docs/display_modes.md`。
@@ -76,3 +78,9 @@ adb -s 机器人IP:端口 shell am instrument -w \
   -e class com.robint.CameraProbeTest#cameraDeliversFrames -e cameraId 102 \
   com.robint.sdk.demo.test/androidx.test.runner.AndroidJUnitRunner
 ```
+
+## 项间休息页
+
+多项目计划沿用“本项结果 → 休息 → 下一项准备”的流程。休息页使用现有绿色主题，显示已完成项目进度、mm:ss 倒计时、下一动作教学封面和跳过/加时操作；窄屏竖向排列。计时基于 elapsedRealtime，延长时从当前截止时间（过期则从现在）增加 20 秒，到零只更新按钮，不自动启动摄像头或识别。后台中断规则沿用原流程。
+
+教学在当前 Activity 弹窗中复用 TeachingMediaCache 校验并播放视频，默认静音，关闭或离开时释放播放器与下载任务；没有可用素材时显示步骤和失败状态。TeachingMediaCache 不返回相同版本时不混播旧视频。`TrainingPresentationTest` 覆盖加时、到零确认、到零后加时、结束确认取消、教学返回与跳过；传 `-e restVideo true` 时需隔离 UI 夹具同时提供公开动作目录及素材，额外断言实机视频播放。

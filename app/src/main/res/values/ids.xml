@@ -1,4 +1,9 @@
 <resources>
+    <item name="training_rest_timer" type="id" />
+    <item name="training_rest_skip" type="id" />
+    <item name="training_rest_add" type="id" />
+    <item name="training_rest_teaching" type="id" />
+    <item name="training_rest_video" type="id" />
     <item name="login_identity" type="id" />
     <item name="login_secret" type="id" />
     <item name="login_email" type="id" />

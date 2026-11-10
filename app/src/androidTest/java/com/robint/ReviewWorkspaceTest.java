@@ -80,6 +80,7 @@ public class ReviewWorkspaceTest {
         while (true) {
             try {
                 androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(label))
+                    .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
                     .perform(androidx.test.espresso.action.ViewActions.click());
                 return;
             } catch (androidx.test.espresso.NoMatchingViewException missing) {
@@ -90,6 +91,8 @@ public class ReviewWorkspaceTest {
     }
 
     private void screenshot(Context context, String name) throws Exception {
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        SystemClock.sleep(300);
         Bitmap image = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
         File folder = new File(context.getFilesDir(), "benchmarks");
         assertTrue(folder.isDirectory() || folder.mkdirs());
@@ -127,6 +130,8 @@ public class ReviewWorkspaceTest {
                 assertEquals("\"none\"", js(scenario, "getComputedStyle(document.querySelector('.sidebar')).display"));
                 assertEquals("\"none\"", js(scenario, "getComputedStyle(document.getElementById('loginScreen')).display"));
                 assertEquals("false", js(scenario, "document.documentElement.scrollWidth>innerWidth"));
+                assertEquals("false", js(scenario, "document.getElementById('evidencePanel').hidden"));
+                assertEquals("true", js(scenario, "document.getElementById('sheetPanel').hidden"));
                 waitFor(scenario, "document.getElementById('clipPlayer').readyState>=2 && document.getElementById('clipPlayer').videoWidth>0");
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync();
                 SystemClock.sleep(300);
@@ -136,9 +141,35 @@ public class ReviewWorkspaceTest {
                 assertEquals("false", js(scenario, "document.documentElement.scrollWidth>innerWidth"));
                 screenshot(context, "review-workspace-large-text");
                 scenario.onActivity(a -> web(a).getSettings().setTextZoom(100));
+                js(scenario, "document.getElementById('eventNote').value='切换页保留的复核依据';document.getElementById('eventNote').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('decision').value='confirmed'");
+                scenario.onActivity(a -> a.findViewById(R.id.rehab_navigation).findViewWithTag("康复训练单").performClick());
+                waitFor(scenario, "!document.getElementById('sheetPanel').hidden && document.getElementById('evidencePanel').hidden");
+                assertEquals("true", js(scenario, "document.getElementById('clipPlayer').paused"));
                 js(scenario, "document.querySelector('[name=patient_name]').value='机器人夹具手填';document.querySelector('[name=patient_name]').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('saveDraft').click()");
+                assertEquals("\"请先到“人工复核”保存片段结论。\"", js(scenario, "document.getElementById('saveStatus').textContent"));
+                scenario.onActivity(a -> a.findViewById(R.id.rehab_navigation).findViewWithTag("人工复核").performClick());
+                waitFor(scenario, "!document.getElementById('evidencePanel').hidden");
+                assertEquals("\"切换页保留的复核依据\"", js(scenario, "document.getElementById('eventNote').value"));
+                js(scenario, "document.getElementById('saveEvent').click()");
+                waitFor(scenario, "document.getElementById('eventSaveStatus').textContent.startsWith('已保存')");
+                js(scenario, "document.querySelector('.page-switch [data-workspace-page=sheet]').click()");
+                waitFor(scenario, "!document.getElementById('sheetPanel').hidden");
+                scenario.onActivity(a -> {
+                    assertTrue(a.findViewById(R.id.rehab_navigation).findViewWithTag("康复训练单").isSelected());
+                    assertTrue(((android.widget.TextView) a.findViewById(R.id.rehab_page_title)).getText().toString().endsWith("康复训练单"));
+                });
+                assertEquals("\"机器人夹具手填\"", js(scenario, "document.querySelector('[name=patient_name]').value"));
+                screenshot(context, "review-sheet-normal");
+                scenario.onActivity(a -> web(a).getSettings().setTextZoom(150));
+                SystemClock.sleep(300);
+                assertEquals("false", js(scenario, "document.documentElement.scrollWidth>innerWidth"));
+                screenshot(context, "review-sheet-large-text");
+                scenario.onActivity(a -> web(a).getSettings().setTextZoom(100));
+                js(scenario, "document.getElementById('saveDraft').click()");
                 waitFor(scenario, "document.getElementById('saveStatus').textContent.startsWith('已保存草稿')");
                 assertEquals("false", js(scenario, "window.rehabHasUnsavedChanges()"));
+                scenario.onActivity(a -> a.findViewById(R.id.rehab_navigation).findViewWithTag("人工复核").performClick());
+                waitFor(scenario, "!document.getElementById('evidencePanel').hidden");
                 js(scenario, "document.getElementById('eventNote').value='尚未保存的复核依据';document.getElementById('eventNote').dispatchEvent(new Event('input',{bubbles:true}))");
                 assertEquals("true", js(scenario, "window.rehabHasUnsavedChanges()"));
                 scenario.moveToState(Lifecycle.State.CREATED); scenario.moveToState(Lifecycle.State.RESUMED);
@@ -157,6 +188,11 @@ public class ReviewWorkspaceTest {
                 openReview(scenario);
                 scenario.onActivity(HomeActivity::onBackPressed);
                 assertExited(scenario);
+            }
+            try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(new Intent(context, HomeActivity.class).putExtra("page", "康复训练单"))) {
+                waitFor(scenario, "document.getElementById('reviewPanels') && !document.getElementById('reviewPanels').hidden && !document.getElementById('sheetPanel').hidden");
+                assertEquals("true", js(scenario, "document.getElementById('evidencePanel').hidden"));
+                assertEquals("\"机器人夹具手填\"", js(scenario, "document.querySelector('[name=patient_name]').value"));
             }
         } finally {
             SharedPreferences.Editor restore = preferences.edit().clear();

@@ -82,6 +82,7 @@ public class HomeActivity extends AppCompatActivity {
         UiComponents.immersive(this);
         setContentView(R.layout.activity_home);
         preferences = getSharedPreferences("rehab", MODE_PRIVATE);
+        preferences.edit().remove("next_remote_diagnostic").apply();
         offlineTeaching = getIntent().getBooleanExtra("offline_teaching", false);
         api = new RehabApiClient(this);
         media = new TeachingMediaCache(this);
@@ -133,10 +134,9 @@ public class HomeActivity extends AppCompatActivity {
         if (wide) {
             LinearLayout name = UiComponents.column(this); name.setPadding(UiComponents.dp(this, 10), 0, 0, 0);
             TextView nameText = UiComponents.heading(this, "复健"); nameText.setTextColor(Color.WHITE); nameText.setTextSize(27);
-            name.addView(nameText); name.addView(UiComponents.text(this, "REHAB TOGETHER", 8, UiComponents.NAV_TEXT)); brand.addView(name);
+            name.addView(nameText); brand.addView(name);
         }
         brand.setGravity(Gravity.CENTER); if (!portrait) rail.addView(brand, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, wide ? 132 : 76)));
-        if (wide) { TextView label = UiComponents.text(this, "我的康复空间", 12, UiComponents.NAV_TEXT); label.setPadding(12, 8, 0, 16); rail.addView(label); }
         LinearLayout links = UiComponents.column(this);
         if (portrait) {
             links.setOrientation(LinearLayout.HORIZONTAL);
@@ -147,7 +147,7 @@ public class HomeActivity extends AppCompatActivity {
         }
         if (SessionStore.staff(this)) page = "患者管理";
         if (offlineTeaching) page = "动作库";
-        for (String label : offlineTeaching ? new String[]{"动作库"} : SessionStore.staff(this) && !portrait ? new String[]{"训练", "训练计划", "动作库", "训练记录", "设置", "患者管理", "人工复核"} : new String[]{"训练", "训练计划", "动作库", "训练记录", "设置"}) {
+        for (String label : offlineTeaching ? new String[]{"动作库"} : SessionStore.staff(this) && !portrait ? new String[]{"训练", "训练计划", "动作库", "训练记录", "设置", "患者管理", "人工复核", "康复训练单"} : new String[]{"训练", "训练计划", "动作库", "训练记录", "设置"}) {
             MaterialButton button = UiComponents.button(this, "训练".equals(label) ? "今日康复" : label, false, v -> navigate(label));
             button.setMinWidth(0); button.setMinimumWidth(0);
             button.setTag(label); button.setStrokeWidth(0); button.setTextSize(wide ? 16 : 12);
@@ -166,7 +166,6 @@ public class HomeActivity extends AppCompatActivity {
         }
         TextView role = UiComponents.text(this, offlineTeaching ? "离线教学" : SessionStore.staff(this) ? "工作人员模式" : "患者空间", wide ? 14 : 11, UiComponents.NAV_TEXT);
         role.setGravity(Gravity.CENTER); if (!portrait) rail.addView(role, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, 48)));
-        if (wide) { TextView station = UiComponents.text(this, "机构内康复训练\n局域网 · 共享设备", 11, UiComponents.NAV_TEXT); station.setGravity(Gravity.CENTER); rail.addView(station); }
         if (state != null) page = state.getString("page", "训练");
         else if (!offlineTeaching && getIntent().hasExtra("page")) page = getIntent().getStringExtra("page");
         reportToOpen = getIntent().getStringExtra("open_run");
@@ -228,18 +227,18 @@ public class HomeActivity extends AppCompatActivity {
     }
 
     private LinearLayout begin(String heading) {
-        setRequestedOrientation(heading.contains("编辑") || heading.contains("新建") || heading.contains("配置训练") || "人工复核".equals(heading) ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
+        setRequestedOrientation(heading.contains("编辑") || heading.contains("新建") || heading.contains("配置训练") || reviewPage(heading) ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
         generation++;
         stopVideo();
         title.setText("康复空间  ›  " + ("训练".equals(heading) ? "今日康复" : heading));
-        notice.setVisibility("人工复核".equals(heading) ? View.GONE : View.VISIBLE);
+        notice.setVisibility(reviewPage(heading) ? View.GONE : View.VISIBLE);
         notice.setText(patient == null ? "请先选择患者，训练数据将按患者独立保存" :
-            patient.optString("code") + " · " + RehabApiClient.side(patient) + "患侧 · 前臂 " + patient.optDouble("forearm_cm") + " cm");
+            RehabApiClient.side(patient) + "患侧 · 前臂 " + patient.optDouble("forearm_cm") + " cm");
         content.removeAllViews();
         LinearLayout body = UiComponents.column(this);
         int padding = UiComponents.dp(this, UiComponents.portrait(this) ? 18 : getResources().getConfiguration().screenWidthDp >= 1150 ? 38 : 24);
         body.setPadding(padding, UiComponents.dp(this, 26), padding, UiComponents.dp(this, 32));
-        if (!"训练".equals(heading)) UiComponents.section(this, body, heading, pageSubtitle(heading));
+        if (!"训练".equals(heading)) UiComponents.section(this, body, heading, "");
         body.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
         body.setFocusableInTouchMode(true);
         body.requestFocus();
@@ -250,12 +249,14 @@ public class HomeActivity extends AppCompatActivity {
         return body;
     }
 
+    private boolean reviewPage(String name) { return "人工复核".equals(name) || "康复训练单".equals(name); }
+
     private void navigate(String destination) {
-        if (reviewWorkspace != null) {
-            if (!"人工复核".equals(destination)) reviewWorkspace.requestLeave(() -> { closeReview(); navigate(destination); });
+        if (reviewWorkspace != null && !reviewPage(destination)) {
+            reviewWorkspace.requestLeave(() -> { closeReview(); navigate(destination); });
             return;
         }
-        if ("人工复核".equals(destination) && !"人工复核".equals(page)) reviewReturnPage = page;
+        if (reviewPage(destination) && !reviewPage(page)) reviewReturnPage = page;
         page = destination;
         for (MaterialButton button : navigation) {
             boolean selected = destination.equals(button.getTag());
@@ -263,6 +264,9 @@ public class HomeActivity extends AppCompatActivity {
             button.setTextColor(selected ? Color.WHITE : UiComponents.NAV_TEXT);
             button.setSelected(selected);
             button.setIconTint(android.content.res.ColorStateList.valueOf(selected ? Color.WHITE : UiComponents.NAV_TEXT));
+        }
+        if (reviewWorkspace != null) {
+            title.setText("康复空间  ›  " + page); reviewWorkspace.showPage(page); return;
         }
         if ("患者管理".equals(page) && SessionStore.staff(this)) showPatientManagement();
         else if ("动作库".equals(page)) showLibrary();
@@ -272,32 +276,22 @@ public class HomeActivity extends AppCompatActivity {
         else if ("每周日程".equals(page)) showSchedule();
         else if ("设备与服务".equals(page) && SessionStore.staff(this)) showDevice();
         else if ("隐私与使用告知".equals(page)) showPrivacy();
-        else if (SessionStore.staff(this) && "人工复核".equals(page)) showReview();
+        else if (SessionStore.staff(this) && reviewPage(page)) showReview();
         else if (SessionStore.staff(this) && ("备份与恢复".equals(page) || "操作日志".equals(page))) showUnconnected(page);
         else showHome();
     }
 
     private void showReview() {
         if (!SessionStore.require(this)) return;
-        begin("人工复核");
+        begin(page);
         content.removeAllViews();
-        reviewWorkspace = new ReviewWorkspace(this, reviewRunId, () -> navigate(reviewReturnPage));
+        reviewWorkspace = new ReviewWorkspace(this, reviewRunId, page, this::navigate, () -> navigate(reviewReturnPage));
         content.addView(reviewWorkspace, new FrameLayout.LayoutParams(-1, -1));
     }
 
     private void closeReview() {
         if (reviewWorkspace != null) { reviewWorkspace.close(); reviewWorkspace = null; }
         reviewRunId = null;
-    }
-
-    private String pageSubtitle(String heading) {
-        if (heading.contains("教学")) return "先看清示范，再跟着自己的节奏慢慢练习。";
-        if (heading.contains("患者")) return "管理患者档案，核对编号与患侧，为每个人安排合适的练习。";
-        if (heading.contains("计划")) return "由工作人员安排动作与目标，计划调整不会改变过去的记录。";
-        if (heading.contains("记录") || heading.contains("详情")) return "回顾每一次练习，完成、达标与算法判定分别呈现。";
-        if ("动作库".equals(heading)) return "看清步骤，再开始练习。六个动作均附原有教学视频。";
-        if ("设置".equals(heading)) return "让声音、设备和操作更适合你。";
-        return "机构内康复辅助 · 按自身节奏完成。";
     }
 
     private boolean needPatient(LinearLayout body) {
@@ -323,23 +317,20 @@ public class HomeActivity extends AppCompatActivity {
 
     private void showHome() {
         LinearLayout body = begin("训练");
-        UiComponents.section(this, body, patient == null ? "每一次练习，都是向前一步" : patient.optString("name") + "，今天也一起加油", "放松双手，按自己的节奏慢慢开始。");
+        UiComponents.section(this, body, "今日康复", "");
         if (needPatient(body)) return;
         FrameLayout heroBox = new FrameLayout(this);
         heroBox.setBackground(UiComponents.background(this, UiComponents.MINT, 24)); heroBox.setClipToOutline(true);
         LinearLayout heroLayout = UiComponents.row(this); heroLayout.setGravity(Gravity.TOP);
-        LinearLayout hero = UiComponents.column(this); int heroPadding = UiComponents.dp(this, UiComponents.portrait(this) ? 24 : 30); hero.setPadding(heroPadding, heroPadding, heroPadding, heroPadding);
-        hero.addView(UiComponents.text(this, "今日训练计划", 14, UiComponents.PRIMARY));
-        TextView greeting = UiComponents.heading(this, "每一次练习，\n都是向前一步。"); greeting.setTextSize(UiComponents.portrait(this) ? 28 : 34);
+        LinearLayout hero = UiComponents.column(this); int heroPadding = UiComponents.dp(this, UiComponents.portrait(this) ? 24 : 30); hero.setPadding(heroPadding, heroPadding, heroPadding, heroPadding); hero.setGravity(Gravity.CENTER_VERTICAL);
+        TextView greeting = UiComponents.heading(this, "今日训练计划"); greeting.setTextSize(UiComponents.portrait(this) ? 28 : 34);
         greeting.setPadding(0, UiComponents.dp(this, 18), 0, UiComponents.dp(this, 16)); hero.addView(greeting);
         TextView today = UiComponents.text(this, "正在读取你的训练计划…", 15, UiComponents.MUTED);
         today.setLineSpacing(UiComponents.dp(this, 6), 1);
         hero.addView(today);
-        TextView meta = UiComponents.text(this, RehabApiClient.side(patient) + "患侧 · 按自身节奏完成", 14, UiComponents.PRIMARY);
-        meta.setPadding(0, UiComponents.dp(this, 18), 0, UiComponents.dp(this, 12)); hero.addView(meta);
         MaterialButton start = UiComponents.compact(this, "开始今日训练", true, v -> createRun("plan", null, 0)); start.setEnabled(false);
         start.setIcon(new IconDrawable("play", Color.WHITE)); start.setIconSize(UiComponents.dp(this, 20)); hero.addView(start);
-        heroLayout.addView(hero, new LinearLayout.LayoutParams(0, -2, 1.2f));
+        heroLayout.addView(hero, new LinearLayout.LayoutParams(0, -1, 1.2f));
         FrameLayout picture = new FrameLayout(this);
         picture.addView(UiComponents.poster(this, "home_hands"), new FrameLayout.LayoutParams(-1, -1));
         TextView caption = UiComponents.badge(this, "动作教学示范", false); caption.setBackground(UiComponents.background(this, Color.WHITE, 8));
@@ -356,13 +347,12 @@ public class HomeActivity extends AppCompatActivity {
         }
         heroBox.addView(heroLayout, new FrameLayout.LayoutParams(-1, -2));
         LinearLayout progressCard = UiComponents.card(this);
-        progressCard.addView(UiComponents.heading(this, "练习的每一步"));
+        progressCard.addView(UiComponents.heading(this, "训练进度"));
         UiComponents.ProgressRing weekRing = new UiComponents.ProgressRing(this);
         LinearLayout.LayoutParams ringSize = new LinearLayout.LayoutParams(UiComponents.dp(this, 144), UiComponents.dp(this, 144));
         ringSize.gravity = Gravity.CENTER_HORIZONTAL; ringSize.setMargins(0, UiComponents.dp(this, 16), 0, UiComponents.dp(this, 14)); progressCard.addView(weekRing, ringSize);
         TextView completed = UiComponents.text(this, "今日已结束训练  — 项", 15, UiComponents.MUTED); progressCard.addView(completed);
         TextView duration = UiComponents.text(this, "今日训练用时  — 分钟", 15, UiComponents.MUTED); progressCard.addView(duration);
-        TextView encouragement = UiComponents.text(this, "按计划练习，也记得好好休息。", 13, UiComponents.MUTED); encouragement.setPadding(0, UiComponents.dp(this, 16), 0, 0); progressCard.addView(encouragement);
         LinearLayout top = UiComponents.split(this, body, heroBox, progressCard, .70f);
         LinearLayout.LayoutParams topSize = new LinearLayout.LayoutParams(-1, -2); topSize.bottomMargin = UiComponents.dp(this, 24); top.setLayoutParams(topSize);
         if (top.getOrientation() == LinearLayout.HORIZONTAL) {
@@ -377,7 +367,6 @@ public class HomeActivity extends AppCompatActivity {
         calendar.addView(UiComponents.heading(this, "本周安排"));
         calendar.addView(UiComponents.compact(this, "查看周日程", false, v -> navigate("每周日程")));
         LinearLayout warm = UiComponents.card(this); warm.setBackground(UiComponents.background(this, UiComponents.WARM, 16));
-        warm.addView(UiComponents.text(this, "让练习舒适一点", 18, UiComponents.INK));
         warm.addView(UiComponents.text(this, "保持舒适坐姿。如果出现疼痛或不适，请停止并联系工作人员。", 15, UiComponents.MUTED)); weekColumn.addView(warm);
         api.get("/api/v1/patients/" + patient.optString("id") + "/calendar", (data, error) -> {
             if (ticket != generation || !foreground) return;
@@ -415,11 +404,11 @@ public class HomeActivity extends AppCompatActivity {
             if (!current.isNull("pending")) plan.addView(UiComponents.text(this, "待生效版本：" + current.optJSONObject("pending").optString("effective_from") + " 起生效，当前训练仍使用旧版", 18, UiComponents.MUTED));
             if (!current.optBoolean("scheduled")) plan.addView(UiComponents.text(this, "尚未配置每周日程，不生成历史应训练次数", 18, UiComponents.MUTED));
             if (items == null || items.length() == 0) {
+                today.setText("尚未配置计划");
                 plan.addView(UiComponents.text(this, "尚未配置计划，请由工作人员选择动作和次数。", 18, UiComponents.MUTED));
             } else {
                 start.setEnabled(true);
-                today.setText("你的训练计划已准备好。" + items.length() + " 个动作，循序练习。");
-                meta.setText(RehabApiClient.side(patient) + "患侧    ·    " + items.length() + " 个动作");
+                today.setText(items.length() + " 个动作");
                 for (int i = 0; i < items.length(); i++) {
                     JSONObject item = items.optJSONObject(i);
                     if (i > 0) UiComponents.divider(this, plan);
@@ -463,7 +452,7 @@ public class HomeActivity extends AppCompatActivity {
         LinearLayout body = begin("我的训练计划");
         if (needPatient(body)) return;
         LinearLayout list = UiComponents.card(this), info = UiComponents.card(this);
-        list.addView(UiComponents.heading(this, "按顺序，慢慢完成")); info.addView(UiComponents.heading(this, "计划说明"));
+        list.addView(UiComponents.heading(this, "训练动作")); info.addView(UiComponents.heading(this, "计划说明"));
         UiComponents.split(this, body, list, info, .64f);
         int ticket = generation;
         api.get("/api/v1/patients/" + patient.optString("id") + "/plan", (data, error) -> {
@@ -485,7 +474,7 @@ public class HomeActivity extends AppCompatActivity {
             if (SessionStore.staff(this)) info.addView(UiComponents.button(this, "编辑计划", false, v -> editPlan()));
             info.addView(UiComponents.button(this, "前往动作库", false, v -> navigate("动作库")));
         });
-        UiComponents.tip(this, body, "循序练习", "根据工作人员指导完成，不自行增加强度。每次训练会保留开始时的计划快照。");
+        info.addView(UiComponents.text(this, "按工作人员指导完成，不自行增加强度。", 15, UiComponents.MUTED));
     }
 
     private void showSchedule() {
@@ -630,7 +619,6 @@ public class HomeActivity extends AppCompatActivity {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {} public void afterTextChanged(Editable s) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) { libraryQuery = s.toString(); renderLibrary(grid); }
         });
-        body.addView(UiComponents.text(this, "教学步骤沿用项目动作目录，动作适用性请由康复专业人员确认。", 12, UiComponents.MUTED));
     }
 
     private void renderLibrary(LinearLayout grid) {
@@ -656,7 +644,7 @@ public class HomeActivity extends AppCompatActivity {
             names.addView(UiComponents.text(this, item.optString("name"), 18, UiComponents.INK), new LinearLayout.LayoutParams(0, -2, 1));
             names.addView(UiComponents.badge(this, cooperation, false));
             TextView counting = UiComponents.text(this, item.optString("counting"), 14, UiComponents.MUTED); counting.setMinHeight(UiComponents.dp(this, 44)); copy.addView(counting);
-            copy.addView(UiComponents.text(this, "cup".equals(item.optString("key")) ? "器材：轻质水杯 / 按指导空手" : "按教学要求准备器材与摆位", 13, UiComponents.MUTED));
+            if ("cup".equals(item.optString("key"))) copy.addView(UiComponents.text(this, "器材：轻质水杯 / 按指导空手", 14, UiComponents.MUTED));
             LinearLayout foot = UiComponents.row(this); foot.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); copy.addView(foot);
             MaterialButton teachingButton = UiComponents.compact(this, "查看教学  →", false, v -> showTeaching(item));
             teachingButton.setTag("teach:" + item.optString("key")); foot.addView(teachingButton);
@@ -1116,14 +1104,18 @@ public class HomeActivity extends AppCompatActivity {
             if (ticket != generation || !foreground) return;
             if (error != null) { notice.setText(error); return; }
             JSONArray records = (JSONArray) data;
-            if (records.length() == 0) UiComponents.tip(this, list, "练习的每一步，都会留在这里", "这个日期范围内还没有训练记录。完成第一次训练后，就可以查看结果与感受。");
+            if (records.length() == 0) list.addView(UiComponents.text(this, "暂无训练记录", 18, UiComponents.MUTED));
             boolean tableLayout = getResources().getConfiguration().screenWidthDp > 1000;
             LinearLayout table = UiComponents.card(this);
             if (tableLayout && records.length() > 0) {
                 list.addView(table);
                 LinearLayout header = UiComponents.row(this); header.setBackground(UiComponents.background(this, UiComponents.BACKGROUND, 10));
                 String[] labels = {"训练时间", "训练类型", "已结束项目", "实际用时", "结束状态", "操作"};
-                for (int i = 0; i < labels.length; i++) header.addView(UiComponents.text(this, labels[i], 13, UiComponents.MUTED), new LinearLayout.LayoutParams(0, UiComponents.dp(this, 48), i == 0 ? 1.8f : 1));
+                for (int i = 0; i < labels.length; i++) {
+                    TextView label = UiComponents.text(this, labels[i], 17, UiComponents.INK);
+                    label.setGravity(Gravity.CENTER); label.setTypeface(null, android.graphics.Typeface.BOLD);
+                    header.addView(label, new LinearLayout.LayoutParams(0, UiComponents.dp(this, 56), i == 0 ? 1.8f : 1));
+                }
                 table.addView(header);
             }
             for (int i = 0; i < records.length(); i++) {
@@ -1133,7 +1125,11 @@ public class HomeActivity extends AppCompatActivity {
                     String[] values = {localTime(record.optString("created_at")), "plan".equals(record.optString("mode")) ? "计划训练" : "单项练习",
                         record.optInt("completed_items") + " / " + record.optJSONArray("items").length() + " 项",
                         String.format(Locale.CHINA, "%.1f 分钟", record.optDouble("elapsed_seconds") / 60), runStatus(record.optString("status"))};
-                    for (int j = 0; j < values.length; j++) row.addView(UiComponents.text(this, values[j], 15, j == 4 && !"completed".equals(record.optString("status")) ? UiComponents.ORANGE : UiComponents.INK), new LinearLayout.LayoutParams(0, -2, j == 0 ? 1.8f : 1));
+                    for (int j = 0; j < values.length; j++) {
+                        TextView value = UiComponents.text(this, values[j], 15, j == 4 && !"completed".equals(record.optString("status")) ? UiComponents.ORANGE : UiComponents.INK);
+                        value.setGravity(Gravity.CENTER);
+                        row.addView(value, new LinearLayout.LayoutParams(0, -2, j == 0 ? 1.8f : 1));
+                    }
                     row.addView(UiComponents.compact(this, "查看详情  →", false, v -> showRun(record.optString("id"))), new LinearLayout.LayoutParams(0, UiComponents.dp(this, 48), 1));
                     table.addView(row); UiComponents.divider(this, table); continue;
                 }
@@ -1184,7 +1180,8 @@ public class HomeActivity extends AppCompatActivity {
             feelings.addView(UiComponents.text(this, feedbackText(feedback), 17, UiComponents.INK)); body.addView(feelings);
             if (SessionStore.staff(this)) {
                 body.addView(UiComponents.compact(this, "训练摘要报告", false, v -> showReport(run)));
-                body.addView(UiComponents.compact(this, "人工复核与康复训练单", true, v -> { reviewRunId = id; navigate("人工复核"); }));
+                body.addView(UiComponents.compact(this, "人工复核", true, v -> { reviewRunId = id; navigate("人工复核"); }));
+                body.addView(UiComponents.compact(this, "康复训练单", false, v -> { reviewRunId = id; navigate("康复训练单"); }));
             }
             if (!"active".equals(run.optString("status"))) body.addView(UiComponents.button(this, "补填或修改训练后感受", false,
                 v -> startActivityForResult(new Intent(this, FeedbackActivity.class).putExtra("run_id", id).putExtra("phase", "post"), 202)));
@@ -1266,8 +1263,7 @@ public class HomeActivity extends AppCompatActivity {
         LinearLayout reading = UiComponents.card(this), menu = UiComponents.card(this);
         reading.addView(UiComponents.heading(this, "阅读与提示")); menu.addView(UiComponents.heading(this, "使用与设备"));
         UiComponents.split(this, body, reading, menu, .58f);
-        settingSwitch(reading, "训练语音提示", "播报开始、关键纠正、达到目标与结束，不逐次报数。", "voice", true);
-        reading.addView(UiComponents.text(this, "字号与显示对比度跟随设备系统的辅助功能设置。", 15, UiComponents.MUTED));
+        settingSwitch(reading, "训练语音提示", "开始、纠正与结束时播报", "voice", true);
         reading.addView(UiComponents.button(this, "系统显示与辅助功能", false, v -> {
             try { startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)); }
             catch (Exception e) { notice.setText("设备未提供辅助功能设置，请联系工作人员"); }
@@ -1282,10 +1278,7 @@ public class HomeActivity extends AppCompatActivity {
             menu.addView(UiComponents.button(this, "备份与恢复", false, v -> navigate("备份与恢复")));
             menu.addView(UiComponents.button(this, "患者管理", false, v -> navigate("患者管理")));
         }
-        menu.addView(UiComponents.heading(this, "关于复健"));
-        menu.addView(UiComponents.text(this, SessionStore.staff(this) ? "当前身份：工作人员" : "当前身份：患者 · 仅本人数据", 15, UiComponents.MUTED));
         menu.addView(UiComponents.button(this, "退出登录", false, v -> SessionStore.logout(this)));
-        UiComponents.tip(this, body, "按自己的节奏，循序练习", "主观反馈不自动调整训练强度。动作是否适合当前恢复阶段，请与工作人员确认。");
     }
 
     private void settingSwitch(LinearLayout parent, String label, String description, String key, boolean initial) {
@@ -1324,9 +1317,8 @@ public class HomeActivity extends AppCompatActivity {
         })); body.addView(connection);
         }
         LinearLayout device = UiComponents.card(this);
-        device.addView(UiComponents.heading(this, "设备与语音"));
+        device.addView(UiComponents.heading(this, "训练画面与语音"));
         if (SessionStore.staff(this)) {
-            device.addView(UiComponents.heading(this, "日常训练画面"));
             android.widget.RadioGroup modes = new android.widget.RadioGroup(this);
             for (String mode : new String[]{"keypoints", "annotated"}) {
                 android.widget.RadioButton choice = new android.widget.RadioButton(this);
@@ -1342,17 +1334,14 @@ public class HomeActivity extends AppCompatActivity {
                 if (choice != null) preferences.edit().putString("daily_preview_mode", (String) choice.getTag()).apply();
             });
             device.addView(modes);
-            device.addView(UiComponents.text(this, "本机记住选择，患者登录同样适用；下次进入训练生效。远端标注模式切到本地画面后，视频回传仍会继续。", 14, UiComponents.MUTED));
+            device.addView(UiComponents.text(this, "下次训练生效", 14, UiComponents.MUTED));
         }
-        if (SessionStore.staff(this)) settingSwitch(device, "下一次训练开启远端诊断",
-                "仅覆盖下一次成功连接：使用本地骨架并提供远端原图诊断。之后恢复所选日常模式。", "next_remote_diagnostic", false);
         CheckBox voice = new CheckBox(this); voice.setText("播报关键提示与训练结束"); voice.setTextSize(18);
         voice.setChecked(preferences.getBoolean("voice", true));
         voice.setOnCheckedChangeListener((button, checked) -> preferences.edit().putBoolean("voice", checked).apply()); device.addView(voice);
         boolean missingVoice = preferences.contains("tts_zh_available") && !preferences.getBoolean("tts_zh_available", false)
             && !new TrainingCueAudio(this).available();
-        device.addView(UiComponents.text(this, missingVoice ? "本机中文语音不可用，请安装中文 TTS 语音包。当前使用文字引导。" :
-            "握拳伸展可用内置普通话提示；其他动态语音需要中文 TTS 语音包。无法播放时保留文字引导。", 18, missingVoice ? UiComponents.DANGER : UiComponents.MUTED));
+        if (missingVoice) device.addView(UiComponents.text(this, "中文语音不可用，请安装语音包。当前使用文字引导。", 18, UiComponents.DANGER));
         device.addView(UiComponents.button(this, "中文语音设置", false, v -> {
             try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
             catch (Exception e) { notice.setText("设备未提供系统语音设置，请联系设备工作人员"); }
@@ -1374,7 +1363,6 @@ public class HomeActivity extends AppCompatActivity {
         }
         staff.addView(UiComponents.text(this, "训练结果为算法参考，请按工作人员指导练习。", 18, UiComponents.MUTED)); body.addView(staff);
         }
-        body.addView(UiComponents.text(this, SessionStore.staff(this) ? "当前身份：工作人员" : "当前身份：患者 · 仅本人数据", 18, UiComponents.MUTED));
         body.addView(UiComponents.button(this, "退出登录", false, v -> SessionStore.logout(this)));
     }
 

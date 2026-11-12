@@ -96,12 +96,39 @@ public class LoginActivity extends AppCompatActivity {
         LinearLayout brandCopy = UiComponents.column(this); brandCopy.setPadding(UiComponents.dp(this, 12), 0, 0, 0);
         TextView brandName = UiComponents.heading(this, "复健"); brandName.setTextSize(27); brandCopy.addView(brandName);
         brand.addView(brandCopy); intro.addView(brand);
-        TextView title = UiComponents.heading(this, "康复训练"); title.setTextSize(portrait ? 28 : compact ? 30 : 44);
-        title.setPadding(0, UiComponents.dp(this, portrait ? 24 : 48), 0, UiComponents.dp(this, 32)); intro.addView(title);
+        LinearLayout kicker = UiComponents.row(this);
+        kicker.setPadding(0, UiComponents.dp(this, portrait ? 24 : compact ? 32 : 48), 0, UiComponents.dp(this, 14));
+        View accent = new View(this); accent.setBackgroundColor(UiComponents.PRIMARY);
+        LinearLayout.LayoutParams accentSize = new LinearLayout.LayoutParams(UiComponents.dp(this, 22), UiComponents.dp(this, 2));
+        accentSize.setMarginEnd(UiComponents.dp(this, 10)); kicker.addView(accent, accentSize);
+        kicker.addView(UiComponents.text(this, "康复训练辅助", 15, UiComponents.PRIMARY)); intro.addView(kicker);
+        TextView title = UiComponents.heading(this, "陪伴每一步，\n让康复更从容。"); title.setTextSize(portrait ? 26 : compact ? 30 : 38);
+        title.setLineSpacing(UiComponents.dp(this, 6), 1.1f);
+        title.setPadding(0, 0, 0, 0); intro.addView(title);
+        if (!portrait) {
+            TextView copy = UiComponents.text(this, "从看懂动作，到完成练习。\n用清晰的指引，陪你认真对待每一次训练。", 16, UiComponents.MUTED);
+            copy.setLineSpacing(UiComponents.dp(this, 6), 1.1f);
+            copy.setPadding(0, UiComponents.dp(this, 18), 0, UiComponents.dp(this, 26)); intro.addView(copy);
+        }
         FrameLayout photoBox = new FrameLayout(this); photoBox.setBackground(UiComponents.background(this, UiComponents.MINT, 16)); photoBox.setClipToOutline(true);
         photoBox.addView(UiComponents.poster(this, "home_hands"), new FrameLayout.LayoutParams(-1, -1));
+        TextView caption = UiComponents.text(this, "从双手开始，循序练习", 14, UiComponents.INK);
+        icon(caption, "hand", 18, UiComponents.PRIMARY);
+        caption.setPadding(UiComponents.dp(this, 12), UiComponents.dp(this, 8), UiComponents.dp(this, 12), UiComponents.dp(this, 8));
+        caption.setBackground(UiComponents.background(this, 0xedffffff, 8));
+        FrameLayout.LayoutParams captionSize = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
+        captionSize.setMargins(UiComponents.dp(this, 16), 0, UiComponents.dp(this, 16), UiComponents.dp(this, 16)); photoBox.addView(caption, captionSize);
         int photoHeight = compact ? 160 : 225;
-        if (!portrait) intro.addView(photoBox, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, photoHeight)));
+        if (!portrait) {
+            intro.addView(photoBox, new LinearLayout.LayoutParams(-1, UiComponents.dp(this, photoHeight)));
+            LinearLayout steps = UiComponents.row(this); steps.setPadding(0, UiComponents.dp(this, 20), 0, 0);
+            String[] labels = {"观看示范", "跟随练习", "记录训练"};
+            for (int i = 0; i < labels.length; i++) {
+                TextView step = UiComponents.text(this, "0" + (i + 1) + "  " + labels[i], 15, UiComponents.PRIMARY);
+                steps.addView(step, new LinearLayout.LayoutParams(0, -2, 1));
+            }
+            intro.addView(steps);
+        }
         LinearLayout top = UiComponents.row(this);
         MaterialButton connection = link(compact ? "连接服务" : "康复训练站 · 连接服务", v -> serverDialog());
         connection.setTag("login_server"); connection.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
@@ -159,9 +186,10 @@ public class LoginActivity extends AppCompatActivity {
         }
         notice = UiComponents.text(this, "", 14, UiComponents.DANGER); notice.setVisibility(View.GONE); form.addView(notice);
         submit = UiComponents.button(this, resetting ? "重置密码" : "登录", true, v -> authenticate());
-        submit.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); submit.setIcon(new IconDrawable("arrow", Color.WHITE));
+        submit.setGravity(Gravity.CENTER); submit.setIcon(new IconDrawable("arrow", Color.WHITE));
         submit.setIconSize(UiComponents.dp(this, 22));
         submit.setIconTint(android.content.res.ColorStateList.valueOf(Color.WHITE)); submit.setIconGravity(MaterialButton.ICON_GRAVITY_END);
+        submit.setPaddingRelative(submit.getPaddingEnd() + submit.getIconSize() + submit.getIconPadding(), submit.getPaddingTop(), submit.getPaddingEnd(), submit.getPaddingBottom());
         form.addView(submit);
         EditText last = resetting ? confirmation : emailLogin ? code : secret; last.setImeOptions(EditorInfo.IME_ACTION_DONE);
         last.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_DONE) { authenticate(); return true; } return false; });

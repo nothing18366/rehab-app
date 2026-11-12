@@ -21,12 +21,12 @@
                     <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginTop="8dp" android:layout_marginBottom="12dp" android:background="@color/training_edge" />
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
                         <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center">
-                            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="合格" android:gravity="center" android:textSize="13sp" android:textColor="@color/training_muted" />
+                            <TextView android:id="@+id/training_passed_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="合格" android:gravity="center" android:textSize="13sp" android:textColor="@color/training_muted" />
                             <TextView android:id="@+id/training_passed" android:layout_width="match_parent" android:layout_height="wrap_content"
                                 android:text="0" android:gravity="center" android:includeFontPadding="false" android:fontFamily="sans-serif-medium" android:textSize="44sp" android:textColor="@color/training_mint" />
                         </LinearLayout>
                         <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center">
-                            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="不合格" android:gravity="center" android:textSize="13sp" android:textColor="@color/training_muted" />
+                            <TextView android:id="@+id/training_failed_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="不合格" android:gravity="center" android:textSize="13sp" android:textColor="@color/training_muted" />
                             <TextView android:id="@+id/training_failed" android:layout_width="match_parent" android:layout_height="wrap_content"
                                 android:text="0" android:gravity="center" android:includeFontPadding="false" android:fontFamily="sans-serif-medium" android:textSize="44sp" android:textColor="@color/training_warning" />
                         </LinearLayout>

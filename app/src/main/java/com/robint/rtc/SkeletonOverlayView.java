@@ -28,7 +28,7 @@ public final class SkeletonOverlayView extends View {
     private int pipelineCount;
     private JSONObject pendingTiming;
     private long acceptedAt;
-    private String sessionId = "";
+    private String sessionId = "", highlightSide = "";
     private long sequence = -1, receivedAt, expiresAt, updates, timeouts, draws;
     private int imageWidth, imageHeight, sampleCount;
     private boolean hasPoints, mirror = true, aspectFill;
@@ -81,6 +81,7 @@ public final class SkeletonOverlayView extends View {
         }
         for (float[] group : points) Arrays.fill(group, Float.NaN);
         boolean usable = readPoints(message.optJSONArray("body"), points[0], true);
+        highlightSide = message.optString("highlight_side", "");
         JSONArray hands = message.optJSONArray("hands");
         if (hands != null && hands.length() <= 2) for (int i = 0; i < hands.length(); i++) {
             JSONObject hand = hands.optJSONObject(i);
@@ -127,6 +128,7 @@ public final class SkeletonOverlayView extends View {
     private void clearPoints() {
         removeCallbacks(expire);
         hasPoints = false;
+        highlightSide = "";
         pendingTiming = null;
         for (float[] group : points) Arrays.fill(group, Float.NaN);
         invalidate();
@@ -160,6 +162,18 @@ public final class SkeletonOverlayView extends View {
             for (int[] link : group == 0 ? BODY_LINKS : HAND_LINKS) {
                 if (!Float.isNaN(screen[link[0] * 2]) && !Float.isNaN(screen[link[1] * 2]))
                     canvas.drawLine(screen[link[0] * 2], screen[link[0] * 2 + 1], screen[link[1] * 2], screen[link[1] * 2 + 1], paint);
+            }
+            if (group == 0 && ("left".equals(highlightSide) || "right".equals(highlightSide))) {
+                int offset = "left".equals(highlightSide) ? 0 : 1;
+                paint.setColor(Color.rgb(50, 230, 115));
+                paint.setStrokeWidth(6 * getResources().getDisplayMetrics().density);
+                for (int[] link : new int[][]{{5,7},{7,9},{5,11}}) {
+                    int a = link[0] + offset, b = link[1] + offset;
+                    if (input[a * 3 + 2] >= .5 && input[b * 3 + 2] >= .5)
+                        canvas.drawLine(screen[a * 2], screen[a * 2 + 1], screen[b * 2], screen[b * 2 + 1], paint);
+                }
+                paint.setStrokeWidth(2 * getResources().getDisplayMetrics().density);
+                paint.setColor(Color.rgb(255, 210, 65));
             }
             for (int i = 0; i < input.length / 3; i++) if (!Float.isNaN(screen[i * 2]))
                 canvas.drawCircle(screen[i * 2], screen[i * 2 + 1], 2.5f * getResources().getDisplayMetrics().density, paint);

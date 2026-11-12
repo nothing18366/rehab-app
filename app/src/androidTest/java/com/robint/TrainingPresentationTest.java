@@ -47,6 +47,25 @@ public class TrainingPresentationTest {
         catch (Exception e) { throw new AssertionError(e); }
     }
 
+    private Object get(TrainingActivity activity, String name) {
+        try { Field field = TrainingActivity.class.getDeclaredField(name); field.setAccessible(true); return field.get(activity); }
+        catch (Exception e) { throw new AssertionError(e); }
+    }
+
+    private void markSpeechPlaying(TrainingActivity activity, boolean announcement) {
+        markSpeechPlaying(activity, announcement, "wrist_move", "右侧手腕稳住，手指慢慢动。");
+    }
+
+    private void markSpeechPlaying(TrainingActivity activity, boolean announcement, String code, String text) {
+        try {
+            Object policy = get(activity, "speechPolicy");
+            Method spoken = policy.getClass().getDeclaredMethod("spoken", String.class, String.class, long.class, boolean.class);
+            spoken.setAccessible(true);
+            spoken.invoke(policy, announcement ? "notice:start" : code, text, SystemClock.elapsedRealtime(), announcement);
+            set(activity, "speechInFlight", true); set(activity, "utteranceId", "simulated-speech");
+        } catch (Exception e) { throw new AssertionError(e); }
+    }
+
     private void invoke(TrainingActivity activity, String name) {
         try { Method method = TrainingActivity.class.getDeclaredMethod(name); method.setAccessible(true); method.invoke(activity); }
         catch (Exception e) { throw new AssertionError(e); }
@@ -69,6 +88,84 @@ public class TrainingPresentationTest {
         try (FileOutputStream stream = new FileOutputStream(new File(directory, name + ".png"))) {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
         } finally { bitmap.recycle(); }
+    }
+
+    @Test public void forwardRaiseSetupCountsAndTeachingCache() throws Exception {
+        String fixture = InstrumentationRegistry.getArguments().getString("uiFixture");
+        assumeNotNull(fixture);
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        SharedPreferences preferences = context.getSharedPreferences("rehab", 0);
+        Map<String, ?> saved = preferences.getAll();
+        com.robint.data.local.TeachingMediaCache cache = new com.robint.data.local.TeachingMediaCache(context);
+        try {
+            preferences.edit().putString("server_url", fixture).putBoolean("voice", false).commit();
+            SessionStore.save(context, RehabApiClient.object("token", "ui-fixture", "role", "staff", "expires", System.currentTimeMillis() / 1000 + 3600));
+            JSONArray catalog;
+            okhttp3.OkHttpClient http = new okhttp3.OkHttpClient();
+            try (okhttp3.Response response = http.newCall(new okhttp3.Request.Builder().url(fixture + "/api/v1/actions").build()).execute()) {
+                assertTrue(response.isSuccessful()); catalog = new JSONArray(response.body().string());
+            } finally { http.dispatcher().executorService().shutdown(); }
+            assertEquals(7, catalog.length());
+            org.json.JSONObject teaching = catalog.getJSONObject(6);
+            assertEquals("forward_raise", teaching.getString("key"));
+            java.util.concurrent.CountDownLatch downloaded = new java.util.concurrent.CountDownLatch(1);
+            AtomicBoolean cached = new AtomicBoolean();
+            cache.video(fixture, teaching, (result, error) -> { cached.set(result != null && error == null && result.video.isFile()); downloaded.countDown(); }, message -> {});
+            assertTrue(downloaded.await(20, java.util.concurrent.TimeUnit.SECONDS)); assertTrue(cached.get());
+            Intent intent = new Intent(context, TrainingActivity.class).putExtra("run_id", "ui-fixture").putExtra("catalog", catalog.toString());
+            try (ActivityScenario<TrainingActivity> scenario = ActivityScenario.launch(intent)) {
+                waitFor(scenario, a -> a.findViewById(R.id.training_count) != null && text(a.findViewById(android.R.id.content), "开始训练") != null);
+                scenario.onActivity(a -> {
+                    assertEquals("患侧有效", ((TextView)a.findViewById(R.id.training_passed_label)).getText().toString());
+                    assertEquals("患侧未达标", ((TextView)a.findViewById(R.id.training_failed_label)).getText().toString());
+                    set(a, "state", "connecting"); a.onMessage(RehabApiClient.object("type", "started"));
+                    assertNull(text(a.findViewById(android.R.id.content), "确认患侧"));
+                    a.onMessage(RehabApiClient.object("type", "result", "count", 0, "passed", 0, "progress_count", 0,
+                        "setup_ready", false, "setup_confirmed", false, "phase", "准备对齐", "tracking", "正常",
+                        "feedback", RehabApiClient.object("text", "保持坐稳，双臂放低", "voice_ready", false)));
+                    assertNull(text(a.findViewById(android.R.id.content), "确认患侧"));
+                });
+                screenshot(context, "forward_raise_setup");
+                scenario.onActivity(a -> {
+                    a.onMessage(RehabApiClient.object("type", "result", "count", 4, "passed", 2, "progress_count", 2,
+                        "setup_ready", true, "setup_confirmed", true, "phase", "顶部到位", "tracking", "正常",
+                        "feedback", RehabApiClient.object("text", "双臂自然放回低位", "voice_ready", false)));
+                    assertNull(text(a.findViewById(android.R.id.content), "确认患侧"));
+                    assertEquals("4", ((TextView)a.findViewById(R.id.training_count)).getText().toString());
+                    assertEquals("患侧有效次数 2", a.findViewById(R.id.training_passed).getContentDescription());
+                    assertEquals("患侧未达标次数 2", a.findViewById(R.id.training_failed).getContentDescription());
+                    assertEquals("患侧有效目标", ((TextView)a.findViewById(R.id.training_target_label)).getText().toString());
+                    assertEquals(40, ((android.widget.ProgressBar)a.findViewById(R.id.training_progress)).getProgress());
+                    assertFalse((Boolean)get(a, "speechInFlight"));
+                });
+                screenshot(context, "forward_raise_training");
+                scenario.onActivity(a -> {
+                    assertEquals(1, ((TextView)a.findViewById(R.id.training_failed_label)).getLineCount());
+                    android.graphics.Rect passed = new android.graphics.Rect(), failed = new android.graphics.Rect();
+                    a.findViewById(R.id.training_passed).getGlobalVisibleRect(passed);
+                    a.findViewById(R.id.training_failed).getGlobalVisibleRect(failed);
+                    assertEquals("Affected counts must align", passed.top, failed.top);
+                });
+                scenario.onActivity(a -> {
+                    a.onMessage(RehabApiClient.object("type", "result", "count", 4, "passed", 2, "progress_count", 2,
+                        "setup_ready", false, "setup_confirmed", false, "phase", "准备对齐", "tracking", "患侧姿态不清晰"));
+                    assertNull(text(a.findViewById(android.R.id.content), "确认患侧"));
+                    set(a, "state", "preparing");
+                });
+            }
+        } finally {
+            cache.close();
+            SharedPreferences.Editor restore = preferences.edit().clear();
+            for (Map.Entry<String, ?> entry : saved.entrySet()) {
+                Object value = entry.getValue(); String key = entry.getKey();
+                if (value instanceof String) restore.putString(key, (String)value);
+                else if (value instanceof Long) restore.putLong(key, (Long)value);
+                else if (value instanceof Integer) restore.putInt(key, (Integer)value);
+                else if (value instanceof Boolean) restore.putBoolean(key, (Boolean)value);
+                else if (value instanceof Float) restore.putFloat(key, (Float)value);
+            }
+            restore.commit();
+        }
     }
 
     @Test public void fixedCameraAndLargeCountdownRestoreThePanel() throws Exception {
@@ -123,9 +220,10 @@ public class TrainingPresentationTest {
                     assertFalse(((TextView) a.findViewById(R.id.training_framing)).getText().toString().contains("已达到"));
                 });
                 screenshot(context, "training_stats_feedback");
+                scenario.onActivity(this::assertSpeechLifecycle);
                 scenario.onActivity(a -> {
                     a.onMessage(RehabApiClient.object("type", "result", "count", 12, "passed", 5, "progress_count", 5,
-                        "tracking", "正常", "feedback", RehabApiClient.object("code", "wrist_drift", "level", "severe", "text", "右手手腕偏移较大，请稳住前臂，只活动手指", "voice_ready", true)));
+                        "tracking", "正常", "feedback", RehabApiClient.object("code", "wrist_move", "level", "severe", "text", "右侧手腕稳住，手指慢慢动。", "voice_ready", true)));
                     assertTrue(((TextView) a.findViewById(R.id.training_framing)).getText().toString().contains("已达到"));
                     assertEquals(a.getResources().getColor(R.color.training_danger), ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
                     a.onMessage(RehabApiClient.object("type", "result", "count", 12, "passed", 5, "progress_count", 5,
@@ -225,6 +323,86 @@ public class TrainingPresentationTest {
                 SystemClock.sleep(3200);
                 scenario.moveToState(Lifecycle.State.RESUMED);
                 scenario.onActivity(a -> assertNull(a.findViewById(R.id.training_countdown)));
+            }
+        } finally {
+            SharedPreferences.Editor restore = preferences.edit();
+            for (String key : keys) {
+                Object value = saved.get(key);
+                if (value instanceof String) restore.putString(key, (String) value);
+                else if (value instanceof Long) restore.putLong(key, (Long) value);
+                else if (value instanceof Boolean) restore.putBoolean(key, (Boolean) value);
+                else restore.remove(key);
+            }
+            restore.commit();
+        }
+    }
+
+    // Simulated playback metadata exercises result/watchdog wiring without making sound.
+    private void assertSpeechLifecycle(TrainingActivity a) {
+        markSpeechPlaying(a, false);
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "wrist_move", "level", "severe", "voice_ready", true,
+                "text", "右侧手腕稳住，手指慢慢动。")));
+        assertEquals(true, get(a, "speechInFlight"));
+        set(a, "pendingAnnouncement", "保留待播通知");
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "phase", "level", "normal", "text", "准备完成，请慢慢握拳")));
+        assertEquals(false, get(a, "speechInFlight"));
+        assertEquals("", get(a, "utteranceId"));
+        assertEquals("保留待播通知", get(a, "pendingAnnouncement"));
+        set(a, "pendingAnnouncement", "");
+        markSpeechPlaying(a, false);
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "wrist_move", "level", "severe", "voice_ready", true,
+                "text", "左侧手腕稳住，手指慢慢动。")));
+        assertEquals(false, get(a, "speechInFlight"));
+        markSpeechPlaying(a, false, "close_range", "双手继续握拳，有不适就暂停。");
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "close_range", "level", "mild", "voice_ready", true,
+                "text", "双手继续握拳，有不适就暂停。")));
+        assertEquals(true, get(a, "speechInFlight"));
+        assertEquals(a.getResources().getColor(R.color.training_warning),
+            ((TextView) a.findViewById(R.id.training_hint)).getCurrentTextColor());
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "close_range", "level", "mild", "voice_ready", false,
+                "text", "双手继续握拳，有不适就暂停。")));
+        assertEquals(false, get(a, "speechInFlight"));
+        markSpeechPlaying(a, false, "close_range", "双手继续握拳，有不适就暂停。");
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "open_range", "level", "mild", "voice_ready", true,
+                "text", "双手继续张开，有不适就暂停。")));
+        assertEquals(false, get(a, "speechInFlight"));
+        markSpeechPlaying(a, true);
+        a.onMessage(RehabApiClient.object("type", "result", "count", 10, "passed", 3, "progress_count", 3,
+            "feedback", RehabApiClient.object("code", "phase", "level", "normal", "text", "准备完成，请慢慢握拳")));
+        assertEquals(true, get(a, "speechInFlight"));
+        invoke(a, "stopSpeech");
+        markSpeechPlaying(a, false);
+        set(a, "lastResultAt", SystemClock.elapsedRealtime() - 4000);
+        ((Runnable) get(a, "watchResults")).run();
+        assertEquals(false, get(a, "speechInFlight"));
+        assertTrue(((TextView) a.findViewById(R.id.training_hint)).getText().toString().contains("暂时中断"));
+    }
+
+    @Test public void correctedFeedbackCancelsPlaybackWithoutCameraOrAudio() throws Exception {
+        String fixture = InstrumentationRegistry.getArguments().getString("uiFixture");
+        assumeNotNull(fixture);
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        SharedPreferences preferences = context.getSharedPreferences("rehab", 0);
+        Map<String, ?> saved = preferences.getAll();
+        String[] keys = {"server_url", "auth_token", "auth_base", "auth_role", "auth_patient", "auth_expires", "patient_id", "voice", "tts_zh_available", "last_diagnostics"};
+        try {
+            preferences.edit().putString("server_url", fixture).putBoolean("voice", false).commit();
+            SessionStore.save(context, RehabApiClient.object("token", "ui-fixture", "role", "staff", "expires", System.currentTimeMillis() / 1000 + 3600));
+            Intent intent = new Intent(context, TrainingActivity.class).putExtra("run_id", "ui-fixture").putExtra("catalog", "[]");
+            try (ActivityScenario<TrainingActivity> scenario = ActivityScenario.launch(intent)) {
+                waitFor(scenario, a -> a.findViewById(R.id.training_hint) != null && "preparing".equals(get(a, "state")));
+                scenario.onActivity(a -> {
+                    set(a, "state", "training");
+                    set(a, "item", RehabApiClient.object("action", "fist", "target_reps", 5));
+                    assertSpeechLifecycle(a);
+                    set(a, "state", "preparing");
+                });
             }
         } finally {
             SharedPreferences.Editor restore = preferences.edit();

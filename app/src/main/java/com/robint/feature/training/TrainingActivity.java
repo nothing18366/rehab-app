@@ -322,10 +322,12 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         findViewById(R.id.training_journey).setVisibility(compact ? View.GONE : View.VISIBLE);
         FrameLayout.LayoutParams stats = (FrameLayout.LayoutParams) findViewById(R.id.training_stats_group).getLayoutParams();
         stats.topMargin = UiComponents.dp(this, shortScreen ? 146 : 194);
-        stats.width = UiComponents.dp(this, compact ? 184 : 172);
+        stats.width = UiComponents.dp(this, isForwardRaise() && largeText ? 220 : compact ? 184 : 172);
         FrameLayout.LayoutParams cue = (FrameLayout.LayoutParams) findViewById(R.id.training_cue).getLayoutParams();
-        cue.width = UiComponents.dp(this, Math.min(largeText ? 560 : 480, Math.max(240, width - (compact ? 440 : 560))));
-        cue.topMargin = UiComponents.dp(this, "preparing".equals(state) ? (shortScreen ? 124 : 140) : 104);
+        int cueMaxWidth = "preparing".equals(state) ? 680 : 480;
+        cue.width = UiComponents.dp(this, Math.min(cueMaxWidth + (largeText ? 80 : 0), Math.max(240, width - (compact ? isForwardRaise() && largeText ? 512 : 440 : 560))));
+        cue.topMargin = UiComponents.dp(this, 104);
+        ((FrameLayout.LayoutParams) cameraStatus.getLayoutParams()).bottomMargin = UiComponents.dp(this, compact ? 168 : 30);
         hintView.setTextSize(compact ? 20 : 26);
         LinearLayout goalHeader = (LinearLayout) detailView.getParent();
         goalHeader.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
@@ -349,18 +351,23 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         });
     }
 
+    private boolean isForwardRaise() { return item != null && "forward_raise".equals(item.optString("action")); }
+
     private void displayCounts(JSONObject data) {
+        boolean affected = isForwardRaise();
+        ((TextView) findViewById(R.id.training_passed_label)).setText(affected ? "患侧有效" : "合格");
+        ((TextView) findViewById(R.id.training_failed_label)).setText(affected ? "患侧未达标" : "不合格");
         int total = data.optInt("count"), passed = data.optInt("passed"), target = item.optInt("target_reps");
         countView.setText(String.valueOf(total));
         countView.setContentDescription("完成总次数 " + total + " 次");
-        passedView.setText(String.valueOf(passed)); passedView.setContentDescription("合格次数 " + passed);
+        passedView.setText(String.valueOf(passed)); passedView.setContentDescription((affected ? "患侧有效次数 " : "合格次数 ") + passed);
         int failed = Math.max(0, total - passed);
-        failedView.setText(String.valueOf(failed)); failedView.setContentDescription("不合格次数 " + failed);
+        failedView.setText(String.valueOf(failed)); failedView.setContentDescription((affected ? "患侧未达标次数 " : "不合格次数 ") + failed);
         TextView targetLabel = findViewById(R.id.training_target_label);
-        targetLabel.setText("合格目标");
+        targetLabel.setText(affected ? "患侧有效目标" : "合格目标");
         android.widget.ProgressBar progress = findViewById(R.id.training_progress);
         int progressCount = RehabApiClient.progressCount(data);
-        if (!data.has("progress_count") && !"fist".equals(item.optString("action")))
+        if (!data.has("progress_count") && !affected && !"fist".equals(item.optString("action")))
             targetLabel.setText("完成目标");
         else progressCount = passed;
         detailView.setText(progressCount + " / " + target + " 次");
@@ -412,9 +419,9 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             if ("diagnostic".equals(data.optString("preview_mode")))
                 getSharedPreferences("rehab", MODE_PRIVATE).edit().remove("next_remote_diagnostic").apply();
             state = "training"; updateJourney(1); phaseView.setText("训练中"); liveControls();
-            hintView.setText("请按示范开始，保持动作自然、平稳");
+            hintView.setText(isForwardRaise() ? "侧身坐稳，双臂自然放低后开始动作" : "请按示范开始，保持动作自然、平稳");
             lastResultAt = SystemClock.elapsedRealtime(); handler.postDelayed(watchResults, 1000);
-            speak("fist".equals(item.optString("action")) ? "轻轻握起，慢慢松开，不舒服就停下" : "训练开始", true);
+            if (!isForwardRaise()) speak("fist".equals(item.optString("action")) ? "轻轻握起，慢慢松开，不舒服就停下" : "训练开始", true);
         } else if ("result".equals(type) && "training".equals(state)) {
             lastResult = data; lastResultAt = SystemClock.elapsedRealtime();
             int count = RehabApiClient.progressCount(data), target = item.optInt("target_reps");
@@ -426,9 +433,16 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             String level = feedback == null ? "normal" : feedback.optString("level", "normal");
             hintView.setTextColor(getResources().getColor("severe".equals(level) ? R.color.training_danger
                 : "mild".equals(level) ? R.color.training_warning : R.color.training_text));
-            fpsView.setText(String.format(Locale.CHINA, "识别 FPS：%.1f", data.optDouble("processed_fps")));
+            double fps = data.optDouble("processed_fps");
+            fpsView.setText(Double.isNaN(fps) || Double.isInfinite(fps) || fps < 0 ? "识别 FPS：--"
+                : String.format(Locale.CHINA, "识别 FPS：%.1f", fps));
+            boolean correctionReady = feedback != null && feedback.optBoolean("voice_ready");
+            String correctionCode = "", correctionText = "";
+            if (correctionReady) { correctionCode = feedback.optString("code"); correctionText = feedback.optString("text"); }
+            else if (feedback == null) { correctionCode = hint; correctionText = hint; }
+            if (speechPolicy.correctionExpired(correctionCode, correctionText)) stopCorrection();
             if (feedback != null) {
-                if ("severe".equals(level) && feedback.optBoolean("voice_ready"))
+                if (correctionReady)
                     trySpeak(feedback.optString("text"), feedback.optString("code"), false);
             } else if (!hint.equals(pendingHint)) { pendingHint = hint; hintSince = lastResultAt; }
             else if (lastResultAt - hintSince >= 2000) speak(hint, false);
@@ -454,7 +468,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
             if (!foreground || !"training".equals(state)) return;
             long age = SystemClock.elapsedRealtime() - lastResultAt;
             if (age > 10000) { onError("超过 10 秒未收到识别结果，本次训练已中断"); return; }
-            if (age > 3000) { hintView.setText("识别结果暂时中断；本地画面不代表识别正常"); fpsView.setText("识别 FPS：--（结果中断）"); }
+            if (age > 3000) { stopCorrection(); hintView.setText("识别结果暂时中断；本地画面不代表识别正常"); fpsView.setText("识别 FPS：--（结果中断）"); }
             handler.postDelayed(this, 1000);
         }
     };
@@ -740,7 +754,7 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
         boolean accepted = speechReady ? speech.speak(text, TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.ERROR
             : cueAudio.play(text, () -> speechFinished(id));
         if (!accepted) { speechInFlight = false; return false; }
-        speechPolicy.spoken(code, now);
+        speechPolicy.spoken(code, text, now, announcement);
         return true;
     }
 
@@ -755,11 +769,20 @@ public class TrainingActivity extends AppCompatActivity implements WebRtcClient.
     };
 
     private void speechFinished(String id) {
-        handler.post(() -> { if (id.equals(utteranceId)) speechInFlight = false; });
+        handler.post(() -> { if (id.equals(utteranceId)) { speechInFlight = false; speechPolicy.playbackFinished(); } });
+    }
+
+    private void stopCorrection() {
+        if (!speechPolicy.correctionExpired("", "")) return;
+        utteranceId = ""; speechInFlight = false;
+        speechPolicy.playbackFinished();
+        if (cueAudio != null) cueAudio.stop();
+        if (speech != null) speech.stop();
     }
 
     private void stopSpeech() {
         pendingAnnouncement = ""; utteranceId = ""; speechInFlight = false;
+        speechPolicy.playbackFinished();
         handler.removeCallbacks(playAnnouncement);
         if (cueAudio != null) cueAudio.stop();
         if (speech != null) speech.stop();

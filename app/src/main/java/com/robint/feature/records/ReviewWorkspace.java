@@ -14,6 +14,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import com.robint.data.local.SessionStore;
 import com.robint.ui.component.UiComponents;
@@ -26,9 +27,10 @@ public class ReviewWorkspace extends LinearLayout {
     private WebView web;
     private TextView status;
     private TextView heading;
+    private ProgressBar progress;
     private String page;
     private final String base;
-    private boolean ready, closed, leaving;
+    private boolean ready, closed, leaving, reusable;
     private int loginCheck;
 
     public ReviewWorkspace(Activity owner, String run, String initialPage, OnPageChanged onPageChanged, Runnable onExit) {
@@ -51,7 +53,14 @@ public class ReviewWorkspace extends LinearLayout {
         }));
         toolbar.addView(UiComponents.compact(owner, "返回", false, v -> onExit.run()));
         addView(toolbar);
-        status = UiComponents.text(owner, "正在加载…", 14, UiComponents.MUTED);
+        progress = new ProgressBar(owner, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setIndeterminate(true);
+        progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(UiComponents.PRIMARY));
+        progress.setContentDescription("正在加载" + page);
+        addView(progress, new LinearLayout.LayoutParams(-1, UiComponents.dp(owner, 3)));
+        status = UiComponents.text(owner, "", 14, UiComponents.DANGER);
+        status.setVisibility(View.GONE);
+        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         addView(status);
         web = new WebView(owner); web.setContentDescription(page);
         web.setVisibility(View.INVISIBLE);
@@ -90,13 +99,15 @@ public class ReviewWorkspace extends LinearLayout {
                 final int check = ++loginCheck;
                 // The desktop login form never appears inside the App, even while authentication is pending.
                 view.evaluateJavascript("var nativeStyle=document.createElement('style');nativeStyle.textContent='#loginScreen{display:none!important}';document.head.append(nativeStyle);"
-                    + "if(window.__rehabNativeLoginState!=='ready'){window.__rehabNativeLoginState='loading';"
+                    + "if(!window.__rehabNativeLoginState || window.__rehabNativeLoginState==='error'){window.__rehabNativeLoginState='loading';"
                     + "if(window.rehabLogin){Promise.resolve(window.rehabLogin(" + JSONObject.quote(token) + ",true)).then(function(){"
                     + "window.__rehabNativeLoginState=document.getElementById('workspace').hidden?'error':'ready';"
                     + "},function(){window.__rehabNativeLoginState='error'});}else{window.__rehabNativeLoginState='error'}}", null);
                 waitForLogin(check, 0);
             }
             @Override public void onReceivedError(WebView view, int code, String description, String failingUrl) {
+                if (!trusted(failingUrl) || closed) return;
+                progress.setVisibility(View.GONE);
                 status.setText("工作台加载失败，请检查服务连接后返回重试。"); status.setVisibility(View.VISIBLE);
             }
         });
@@ -116,8 +127,10 @@ public class ReviewWorkspace extends LinearLayout {
         web.evaluateJavascript("window.__rehabNativeLoginState", value -> {
             if (closed || check != loginCheck) return;
             if ("\"ready\"".equals(value)) {
-                ready = true; status.setVisibility(View.GONE); web.setVisibility(View.VISIBLE);
+                ready = true; progress.setVisibility(View.GONE); status.setVisibility(View.GONE); web.setVisibility(View.VISIBLE);
+                showPage(page);
             } else if ("\"error\"".equals(value) || attempt >= 150) {
+                progress.setVisibility(View.GONE);
                 status.setText("无法使用当前 App 登录状态加载工作台。请检查服务连接，或返回 App 登录页重新登录。");
                 status.setVisibility(View.VISIBLE);
             } else web.postDelayed(() -> waitForLogin(check, attempt + 1), 100);
@@ -132,6 +145,7 @@ public class ReviewWorkspace extends LinearLayout {
 
     public void requestLeave(Runnable action) {
         if (closed || leaving) return;
+        reusable = false;
         if (!ready) { action.run(); return; }
         leaving = true;
         final boolean[] answered = {false};
@@ -146,8 +160,18 @@ public class ReviewWorkspace extends LinearLayout {
             if (closed || answered[0]) return;
             answered[0] = true; web.removeCallbacks(timeout);
             if ("true".equals(value)) confirmLeave("有尚未保存的复核结论或训练单，确定离开吗？", action);
-            else { leaving = false; action.run(); }
+            else { leaving = false; reusable = true; action.run(); }
         });
+    }
+
+    public boolean canReuse() { return ready && !closed && reusable; }
+
+    public void refresh() {
+        ready = false; progress.setVisibility(View.VISIBLE); web.setVisibility(View.INVISIBLE);
+        web.evaluateJavascript("window.__rehabNativeLoginState='loading';Promise.resolve(window.rehabRefresh && window.rehabRefresh()).then(function(){"
+            + "window.__rehabNativeLoginState=document.getElementById('workspace').hidden?'error':'ready';"
+            + "},function(){window.__rehabNativeLoginState='error'})", null);
+        waitForLogin(++loginCheck, 0);
     }
 
     private void confirmLeave(String message, Runnable action) {

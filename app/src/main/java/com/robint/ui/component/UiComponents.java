@@ -160,6 +160,8 @@ public final class UiComponents {
         LinearLayout metrics = row(context); metrics.setPadding(0, dp(context, 24), 0, dp(context, 24));
         boolean qualifiedProgress = summary.has("progress_count");
         String[] labels = {qualifiedProgress ? "合格 / 目标" : "完成 / 目标", qualifiedProgress ? "已判定次数" : "算法合格次数", "需复核次数"};
+        boolean affected = "affected_side".equals(summary.optString("evaluation_scope"));
+        if (affected) labels = new String[]{"患侧有效 / 目标", "完成总次数", "患侧未达标"};
         String[] values = {summary.optInt("progress_count", summary.optInt("count")) + " / " + summary.optInt("target"), String.valueOf(summary.optInt(qualifiedProgress ? "count" : "passed")), String.valueOf(summary.optInt("review"))};
         for (int i = 0; i < labels.length; i++) {
             LinearLayout metric = column(context); metric.setGravity(Gravity.CENTER);
@@ -168,7 +170,7 @@ public final class UiComponents {
         }
         card.addView(metrics);
         if (qualifiedProgress) value(context, card, "尝试 / 无法判定", summary.optInt("attempts") + " / " + summary.optInt("unassessable") + " 次");
-        value(context, card, "算法合格率", summary.optInt("count") == 0 ? "暂无判定" : String.format(java.util.Locale.CHINA, "%.1f%%（%d / %d）", summary.optDouble("rate"), summary.optInt("passed"), summary.optInt("count")));
+        value(context, card, affected ? "患侧有效率" : "算法合格率", summary.optInt("count") == 0 ? "暂无判定" : String.format(java.util.Locale.CHINA, "%.1f%%（%d / %d）", summary.optDouble("rate"), summary.optInt("passed"), summary.optInt("count")));
         value(context, card, "实际训练用时", String.format(java.util.Locale.CHINA, "%.1f 秒", elapsed));
         value(context, card, "识别动作累计 / 单次平均", String.format(java.util.Locale.CHINA, "%.1f / %.1f 秒", summary.optDouble("total"), summary.optDouble("avg")));
         if (!summary.optString("detail").isEmpty()) card.addView(text(context, summary.optString("detail"), 16, MUTED));

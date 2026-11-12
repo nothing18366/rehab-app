@@ -15,6 +15,29 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class SkeletonOverlayTest {
+    @Test public void affectedArmHighlightFollowsAnatomicalSideThroughMirroring() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            SkeletonOverlayView view = new SkeletonOverlayView(InstrumentationRegistry.getInstrumentation().getTargetContext(), null);
+            view.setSession("test"); view.layout(0, 0, 400, 400);
+            JSONArray body = new JSONArray();
+            for (int i = 0; i < 17; i++) body.put(JSONObject.NULL);
+            try {
+                for (int side = 0; side < 2; side++) for (int joint = 0; joint < 3; joint++)
+                    body.put(5 + side + joint * 2, new JSONArray().put(side == 0 ? .25 : .75).put(.25 + joint * .25).put(.99));
+                JSONObject message = packet("test", 1, 400, 400).put("body", body).put("highlight_side", "left");
+                view.accept(message, SystemClock.elapsedRealtime(), 0);
+                Bitmap pixels = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888);
+                view.draw(new Canvas(pixels));
+                assertEquals(android.graphics.Color.rgb(50,230,115), pixels.getPixel(300,180));
+                assertEquals(android.graphics.Color.rgb(255,210,65), pixels.getPixel(100,180));
+                view.setMirror(false); pixels.eraseColor(0); view.draw(new Canvas(pixels));
+                assertEquals(android.graphics.Color.rgb(50,230,115), pixels.getPixel(100,180));
+                assertEquals(android.graphics.Color.rgb(255,210,65), pixels.getPixel(300,180));
+                pixels.recycle();
+            } catch (Exception e) { throw new AssertionError(e); }
+        });
+    }
+
     @Test public void pipelineTimingUsesTheSameSequenceAndOnlyItsFirstDraw() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
             SkeletonOverlayView view = new SkeletonOverlayView(InstrumentationRegistry.getInstrumentation().getTargetContext(), null);

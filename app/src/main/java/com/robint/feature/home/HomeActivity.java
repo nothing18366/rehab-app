@@ -68,6 +68,8 @@ public class HomeActivity extends AppCompatActivity {
     private boolean creatingRun;
     private String reportToOpen;
     private ReviewWorkspace reviewWorkspace;
+    private ReviewWorkspace cachedReviewWorkspace;
+    private String cachedReviewRunId;
     private String reviewRunId, reviewReturnPage = "患者管理";
     private JSONObject planDraft;
     private String draftDate;
@@ -192,7 +194,7 @@ public class HomeActivity extends AppCompatActivity {
         final String catalogBase = api.base();
         if (!api.base().isEmpty()) api.getArray("/api/v1/actions", (data, error) -> {
             if (!catalogBase.equals(api.base())) return;
-            if (error == null && data instanceof JSONArray && ((JSONArray) data).length() == 6) {
+            if (error == null && data instanceof JSONArray && ((JSONArray) data).length() > 0) {
                 boolean changed = !actions.toString().equals(data.toString());
                 actions = (JSONArray) data;
                 preferences.edit().putString("action_catalog_" + api.base(), actions.toString()).apply();
@@ -253,7 +255,7 @@ public class HomeActivity extends AppCompatActivity {
 
     private void navigate(String destination) {
         if (reviewWorkspace != null && !reviewPage(destination)) {
-            reviewWorkspace.requestLeave(() -> { closeReview(); navigate(destination); });
+            reviewWorkspace.requestLeave(() -> { cacheReview(); navigate(destination); });
             return;
         }
         if (reviewPage(destination) && !reviewPage(page)) reviewReturnPage = page;
@@ -285,12 +287,26 @@ public class HomeActivity extends AppCompatActivity {
         if (!SessionStore.require(this)) return;
         begin(page);
         content.removeAllViews();
-        reviewWorkspace = new ReviewWorkspace(this, reviewRunId, page, this::navigate, () -> navigate(reviewReturnPage));
+        if (cachedReviewWorkspace != null && java.util.Objects.equals(cachedReviewRunId, reviewRunId)) {
+            reviewWorkspace = cachedReviewWorkspace; cachedReviewWorkspace = null; cachedReviewRunId = null;
+            reviewWorkspace.showPage(page); reviewWorkspace.resume(); reviewWorkspace.refresh();
+        } else {
+            if (cachedReviewWorkspace != null) { cachedReviewWorkspace.close(); cachedReviewWorkspace = null; cachedReviewRunId = null; }
+            reviewWorkspace = new ReviewWorkspace(this, reviewRunId, page, this::navigate, () -> navigate(reviewReturnPage));
+        }
         content.addView(reviewWorkspace, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void cacheReview() {
+        if (reviewWorkspace != null && reviewWorkspace.canReuse()) {
+            reviewWorkspace.pause(); content.removeView(reviewWorkspace);
+            cachedReviewWorkspace = reviewWorkspace; cachedReviewRunId = reviewRunId; reviewWorkspace = null; reviewRunId = null;
+        } else closeReview();
     }
 
     private void closeReview() {
         if (reviewWorkspace != null) { reviewWorkspace.close(); reviewWorkspace = null; }
+        if (cachedReviewWorkspace != null) { cachedReviewWorkspace.close(); cachedReviewWorkspace = null; cachedReviewRunId = null; }
         reviewRunId = null;
     }
 
@@ -635,15 +651,15 @@ public class HomeActivity extends AppCompatActivity {
             if (visible++ % columns == 0) { row = UiComponents.row(this); row.setGravity(Gravity.TOP); grid.addView(row); }
             LinearLayout card = UiComponents.card(this);
             card.setPadding(0, 0, 0, 0); card.setClipToOutline(true);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
             params.setMargins(0, 0, UiComponents.dp(this, 12), UiComponents.dp(this, 12));
             card.setLayoutParams(params);
             card.addView(UiComponents.poster(this, item.optString("key")), new LinearLayout.LayoutParams(-1, UiComponents.dp(this, columns == 3 ? 146 : 132)));
-            LinearLayout copy = UiComponents.column(this); int padding = UiComponents.dp(this, 18); copy.setPadding(padding, padding, padding, padding); card.addView(copy);
+            LinearLayout copy = UiComponents.column(this); int padding = UiComponents.dp(this, 18); copy.setPadding(padding, padding, padding, padding); card.addView(copy, new LinearLayout.LayoutParams(-1, 0, 1));
             LinearLayout names = UiComponents.row(this); copy.addView(names);
             names.addView(UiComponents.text(this, item.optString("name"), 18, UiComponents.INK), new LinearLayout.LayoutParams(0, -2, 1));
             names.addView(UiComponents.badge(this, cooperation, false));
-            TextView counting = UiComponents.text(this, item.optString("counting"), 14, UiComponents.MUTED); counting.setMinHeight(UiComponents.dp(this, 44)); copy.addView(counting);
+            TextView counting = UiComponents.text(this, item.optString("counting"), 14, UiComponents.MUTED); counting.setMinHeight(UiComponents.dp(this, 44)); copy.addView(counting, new LinearLayout.LayoutParams(-1, 0, 1));
             if ("cup".equals(item.optString("key"))) copy.addView(UiComponents.text(this, "器材：轻质水杯 / 按指导空手", 14, UiComponents.MUTED));
             LinearLayout foot = UiComponents.row(this); foot.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); copy.addView(foot);
             MaterialButton teachingButton = UiComponents.compact(this, "查看教学  →", false, v -> showTeaching(item));
@@ -651,7 +667,7 @@ public class HomeActivity extends AppCompatActivity {
             row.addView(card);
         }
         if (visible == 0) grid.addView(UiComponents.text(this, "没有找到匹配的动作，请调整搜索条件。", 18, UiComponents.MUTED));
-        else if (visible % columns != 0) for (int i = visible % columns; i < columns; i++) row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        else if (visible % columns != 0) for (int i = visible % columns; i < columns; i++) row.addView(new View(this), new LinearLayout.LayoutParams(0, -1, 1));
     }
 
     private void showTeaching(JSONObject item) {
@@ -1012,7 +1028,6 @@ public class HomeActivity extends AppCompatActivity {
         LinearLayout body = begin("配置计划 · " + patient.optString("name"));
         LinearLayout actionPanel = UiComponents.column(this), schedule = UiComponents.card(this);
         actionPanel.addView(UiComponents.heading(this, "动作与目标次数"));
-        actionPanel.addView(UiComponents.text(this, "1–6 项，不可重复 · 目标依据完成次数判断", 15, UiComponents.MUTED));
         UiComponents.split(this, body, actionPanel, schedule, .64f);
         schedule.addView(UiComponents.heading(this, "每周训练日与生效日期"));
         LinearLayout weekdays = null;
@@ -1165,8 +1180,10 @@ public class HomeActivity extends AppCompatActivity {
                 run.optJSONArray("items").length(), run.optDouble("elapsed_seconds") / 60), 20, UiComponents.INK));
             body.addView(overview);
             JSONArray sessions = run.optJSONArray("sessions");
+            boolean recordingSelected = false;
             for (int i = 0; i < sessions.length(); i++) {
                 JSONObject session = sessions.optJSONObject(i);
+                recordingSelected |= session.optBoolean("record_nonstandard");
                 LinearLayout card = UiComponents.card(this);
                 card.addView(UiComponents.heading(this, action(session.optString("action")).optString("name")));
                 card.addView(UiComponents.text(this, sessionStatus(session.optString("status")) + " · " +
@@ -1179,9 +1196,20 @@ public class HomeActivity extends AppCompatActivity {
             LinearLayout feelings = UiComponents.card(this); feelings.addView(UiComponents.heading(this, "训练前后感受"));
             feelings.addView(UiComponents.text(this, feedbackText(feedback), 17, UiComponents.INK)); body.addView(feelings);
             if (SessionStore.staff(this)) {
-                body.addView(UiComponents.compact(this, "训练摘要报告", false, v -> showReport(run)));
-                body.addView(UiComponents.compact(this, "人工复核", true, v -> { reviewRunId = id; navigate("人工复核"); }));
-                body.addView(UiComponents.compact(this, "康复训练单", false, v -> { reviewRunId = id; navigate("康复训练单"); }));
+                LinearLayout actions = UiComponents.row(this);
+                body.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+                MaterialButton summaryButton = UiComponents.button(this, "训练摘要报告", false, v -> showReport(run));
+                MaterialButton[] buttons = recordingSelected ? new MaterialButton[] {
+                    summaryButton,
+                    UiComponents.button(this, "人工复核", false, v -> { reviewRunId = id; navigate("人工复核"); }),
+                    UiComponents.button(this, "康复训练单", false, v -> { reviewRunId = id; navigate("康复训练单"); })
+                } : new MaterialButton[] {summaryButton};
+                for (int i = 0; i < buttons.length; i++) {
+                    LinearLayout.LayoutParams size = (LinearLayout.LayoutParams) buttons[i].getLayoutParams();
+                    size.width = 0; size.weight = 1;
+                    size.setMarginEnd(i < buttons.length - 1 ? UiComponents.dp(this, 12) : 0);
+                    actions.addView(buttons[i], size);
+                }
             }
             if (!"active".equals(run.optString("status"))) body.addView(UiComponents.button(this, "补填或修改训练后感受", false,
                 v -> startActivityForResult(new Intent(this, FeedbackActivity.class).putExtra("run_id", id).putExtra("phase", "post"), 202)));
@@ -1214,11 +1242,13 @@ public class HomeActivity extends AppCompatActivity {
     public static String summaryText(JSONObject summary, double elapsed) {
         if (summary == null) return "尚无识别结果";
         boolean qualifiedProgress = summary.has("progress_count");
-        return String.format(Locale.CHINA,
+        String text = String.format(Locale.CHINA,
             (qualifiedProgress ? "合格 %d / %d 次   已判定 %d 次" : "完成 %d / %d 次   合格 %d 次") + "\n算法合格率 %s   需复核 %d 次\n%s\n实际训练用时 %.1f 秒\n已识别动作累计时长 %.1f 秒 · 单次平均 %.1f 秒",
             RehabApiClient.progressCount(summary), summary.optInt("target"), summary.optInt(qualifiedProgress ? "count" : "passed"), summary.optInt("count") == 0 ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%（%d/%d）", summary.optDouble("rate"), summary.optInt("passed"), summary.optInt("count")),
             summary.optInt("review"), summary.optString("detail", ""), elapsed, summary.optDouble("total"), summary.optDouble("avg"))
             + (qualifiedProgress ? "\n尝试 " + summary.optInt("attempts") + " 次 · 无法判定 " + summary.optInt("unassessable") + " 次" : "");
+        return "affected_side".equals(summary.optString("evaluation_scope"))
+            ? text.replace("合格", "患侧有效").replace("需复核", "患侧未达标") : text;
     }
 
     public static String feedbackText(JSONObject feedback) {

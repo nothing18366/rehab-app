@@ -1,6 +1,6 @@
 # 构建、测试与界面约定
 
-结构、命名与模块职责统一见 [architecture.md](architecture.md)，操作流程见 [usage.md](usage.md)。本文件只维护构建、测试和界面开发约定。更新日期：2026-11-10。
+结构、命名与模块职责统一见 [architecture.md](architecture.md)，操作流程见 [usage.md](usage.md)。本文件只维护构建、测试和界面开发约定。更新日期：2026-11-11。
 
 ## 构建与兼容
 
@@ -27,6 +27,10 @@ Gradle 当前设置 `abortOnError=false`，构建成功不代表 Lint 或旧设�
 | `TrainingVoiceTest` | 仅 `allowPhysicalVoice=true` 时实际播放内置语音 |
 | `ReviewWorkspaceTest` | 仅接受 `reviewFixture=http://127.0.0.1:18123`，验证人工复核嵌入、登录、视频、表单和退出 |
 | `CameraProbeTest` | 明确传入 `cameraId` 的独立硬件采集；不上传、不建训练记录 |
+
+训练语音回归：`TrainingSpeechPolicyTest` 验证单条播放、5秒/12秒冷却、恢复/换侧/原因变更后旧纠正失效、冷却不因撤销而重置及通知不被误停；`TrainingCueCatalogTest` 校验当前纠正文案均有真实音频，且未混入已撤回的保持、回缩或逐指提示；当前26段音频包含左/右/双手的阶段提醒与左/右/双侧腕部纠正。系统TTS与内置音频必须使用同一停止路径，不能只替换音频包而跳过结果有效性检查。后端超时/丢手恢复序列由配套仓库 `tests/test_actions.py` 覆盖。
+
+`TrainingPresentationTest#correctedFeedbackCancelsPlaybackWithoutCameraOrAudio` 使用显式 `uiFixture` 的合成训练，模拟播放状态并走真实结果接收/看门狗路径，验证 mild 且 voice_ready=true 的温和提示保持播放、资格撤销/阶段变化/恢复/换侧停播、通知保留和3秒结果中断停播；不要求摄像头首帧，不实际发声。它不能代替 `TrainingVoiceTest` 的设备播放验收。后者播放新版“双手继续握拳”并检查腕部回正音频的开始/停止。服务端 `level` 只控制颜色，客户端必须直接按 `voice_ready` 决定播放资格，不能再添加 severe 限制。
 
 本轮沉浸训练 UI 已在 API 30 模拟器的 1920×1080 / 240dpi 默认字号，以及 213dpi / 150% 字号验证；布局测试包含全屏视频、三位数计次、退出后果文字完整显示和统计/底栏不重叠，骨架测试同时保留副屏 FIT 与主屏 FILL 的坐标检查。夹具使用合成患者与注入结果，不验证真人识别准确率或实体机器人；本轮 Lint 仍报告 HomeActivity、PerformanceStats、themes.xml 中原有的 5 项 NewApi 错误。
 
@@ -86,3 +90,8 @@ adb -s 机器人IP:端口 shell am instrument -w \
 多项目计划沿用“本项结果 → 休息 → 下一项准备”的流程。休息页使用现有绿色主题，显示已完成项目进度、mm:ss 倒计时、下一动作教学封面和跳过/加时操作；窄屏竖向排列。计时基于 elapsedRealtime，延长时从当前截止时间（过期则从现在）增加 20 秒，到零只更新按钮，不自动启动摄像头或识别。后台中断规则沿用原流程。
 
 教学在当前 Activity 弹窗中复用 TeachingMediaCache 校验并播放视频，默认静音，关闭或离开时释放播放器与下载任务；没有可用素材时显示步骤和失败状态。TeachingMediaCache 不返回相同版本时不混播旧视频。`TrainingPresentationTest` 覆盖加时、到零确认、到零后加时、结束确认取消、教学返回与跳过；传 `-e restVideo true` 时需隔离 UI 夹具同时提供公开动作目录及素材，额外断言实机视频播放。
+
+
+### 前平举专项
+
+`TrainingPresentationTest#forwardRaiseSetupCountsAndTeachingCache` 在隔离`uiFixture`下检查患侧摆位、统计、教学缓存及大字号对齐；`SkeletonOverlayTest`覆盖左右骨架镜像和患侧高亮。夹具首项应为`forward_raise`，模拟器运行，不启动实体机器人。后端详细结果与33条视频候选标注见 `../yolo26-pose-detection/docs/forward_raise_validation.md`（相邻仓库）。

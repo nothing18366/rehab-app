@@ -149,6 +149,7 @@ public class TrendsView extends LinearLayout {
 
     private void group(JSONObject group, JSONObject response, String key, int index) {
         Context context = getContext(); JSONObject conditions = group.optJSONObject("conditions"); JSONArray points = group.optJSONArray("points");
+        boolean affected = "forward_raise".equals(key);
         boolean qualifiedProgress = false;
         for (int i = 0; i < points.length(); i++) qualifiedProgress |= points.optJSONObject(i).has("progress_count");
         LinearLayout card = UiComponents.card(context); results.addView(card);
@@ -158,12 +159,12 @@ public class TrendsView extends LinearLayout {
         card.addView(UiComponents.text(context, RehabApiClient.side(conditions) + " · " + ("plan".equals(conditions.optString("mode")) ? "计划训练" : "单项练习")
             + " · 计划版本 " + conditions.optString("plan_revision", "—"), 14, UiComponents.MUTED));
         LinearLayout metrics = UiComponents.row(context); metrics.setPadding(0, UiComponents.dp(context, 16), 0, UiComponents.dp(context, 16)); card.addView(metrics);
-        metric(metrics, "算法合格率", group.isNull("rate") ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%", group.optDouble("rate")));
-        metric(metrics, qualifiedProgress ? "合格 / 已判定次数" : "合格 / 完成次数", group.optInt("passed") + " / " + group.optInt("count"));
+        metric(metrics, affected ? "患侧有效率" : "算法合格率", group.isNull("rate") ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%", group.optDouble("rate")));
+        metric(metrics, affected ? "患侧有效 / 完成总次数" : qualifiedProgress ? "合格 / 已判定次数" : "合格 / 完成次数", group.optInt("passed") + " / " + group.optInt("count"));
         metric(metrics, "训练记录（含部分结果）", points.length() + " 次");
         card.addView(UiComponents.text(context, "合格率仅统计正常结束的训练；不同比较组分别展示。", 13, UiComponents.MUTED));
         CountChart chart = new CountChart(context, points, response.optString("start"), response.optString("end"), conditions.optInt("target_reps"));
-        String countLabel = qualifiedProgress ? "合格次数" : "完成次数";
+        String countLabel = affected ? "患侧有效次数" : qualifiedProgress ? "合格次数" : "完成次数";
         chart.setContentDescription(name(key) + countLabel + "趋势。目标 " + conditions.optInt("target_reps") + " 次，共 " + points.length() + " 条记录；具体数值可展开训练明细查看。");
         card.addView(chart, new LinearLayout.LayoutParams(-1, UiComponents.dp(context, 220)));
         card.addView(UiComponents.text(context, countLabel + "趋势 · 绿色点：正常结束    橙色点：部分结果    横线：目标次数", 13, UiComponents.MUTED));
@@ -235,8 +236,8 @@ public class TrendsView extends LinearLayout {
             LinearLayout head = UiComponents.row(getContext()); body.addView(head);
             head.addView(UiComponents.text(getContext(), p.optString("date"), 17, UiComponents.INK), new LinearLayout.LayoutParams(0, -2, 1));
             head.addView(UiComponents.badge(getContext(), p.optBoolean("partial") ? "部分结果" : "正常结束", p.optBoolean("partial")));
-            body.addView(UiComponents.text(getContext(), (p.has("progress_count") ? "合格 " : "完成 ") + RehabApiClient.progressCount(p) + "/" + p.optInt("target") + " 次 · 用时 " + String.format(Locale.CHINA, "%.1f 秒", p.optDouble("elapsed_seconds")) +
-                " · 算法合格率 " + (p.isNull("rate") ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%（%d/%d）", p.optDouble("rate"), p.optInt("passed"), p.optInt("count"))), 15, UiComponents.INK));
+            body.addView(UiComponents.text(getContext(), ("affected_side".equals(p.optString("evaluation_scope")) ? "患侧有效 " : p.has("progress_count") ? "合格 " : "完成 ") + RehabApiClient.progressCount(p) + "/" + p.optInt("target") + " 次 · 用时 " + String.format(Locale.CHINA, "%.1f 秒", p.optDouble("elapsed_seconds")) +
+                ("affected_side".equals(p.optString("evaluation_scope")) ? " · 患侧有效率 " : " · 算法合格率 ") + (p.isNull("rate") ? "暂无判定" : String.format(Locale.CHINA, "%.1f%%（%d/%d）", p.optDouble("rate"), p.optInt("passed"), p.optInt("count"))), 15, UiComponents.INK));
             if (p.has("progress_count")) body.addView(UiComponents.text(getContext(), "尝试 " + p.optInt("attempts") + " 次 · 无法判定 " + p.optInt("unassessable") + " 次", 14, UiComponents.MUTED));
             body.addView(UiComponents.text(getContext(), HomeActivity.feedbackText(p.optJSONObject("feedback")), 14, UiComponents.MUTED));
             body.addView(UiComponents.compact(getContext(), "查看该次训练详情  →", false, v -> openRun.open(p.optString("run_id"))));

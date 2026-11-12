@@ -59,7 +59,7 @@ public final class TeachingMediaCache {
             String key = item.optString("key"), version = item.optString("content_version");
             Cached old = previous(base, key);
             try {
-                if (!key.matches("rub|fist|stretch|cup|abduction|press") || !version.matches("[a-f0-9]{16}")) throw new IOException("请联网同步教学目录");
+                if (!key.matches("rub|fist|stretch|cup|abduction|press|forward_raise") || !version.matches("[a-f0-9]{16}")) throw new IOException("请联网同步教学目录");
                 File directory = new File(root(base, key), version);
                 JSONObject files = item.getJSONObject("files");
                 boolean cached = valid(new File(directory, "video.mp4"), files.getJSONObject("video"))

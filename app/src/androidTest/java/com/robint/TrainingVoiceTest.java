@@ -21,13 +21,13 @@ public class TrainingVoiceTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 audio[0] = new TrainingCueAudio(InstrumentationRegistry.getInstrumentation().getTargetContext());
                 assertTrue(audio[0].available());
-                assertTrue(audio[0].play("轻轻握起，慢慢松开，不舒服就停下", finished::countDown));
-                assertFalse(audio[0].play("本项训练已结束", () -> {}));
+                assertTrue(audio[0].play("双手继续握拳，有不适就暂停。", finished::countDown));
+                assertFalse(audio[0].play("右侧手腕放松，轻轻回正，有不适就暂停。", () -> {}));
             });
             assertTrue("Chinese audio completion callback missing", finished.await(15, TimeUnit.SECONDS));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 assertFalse(audio[0].isPlaying());
-                assertTrue(audio[0].play("本项训练已结束", () -> {}));
+                assertTrue(audio[0].play("右侧手腕放松，轻轻回正，有不适就暂停。", () -> {}));
                 audio[0].stop();
                 assertFalse(audio[0].isPlaying());
             });

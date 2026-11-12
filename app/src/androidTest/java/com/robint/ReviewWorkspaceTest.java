@@ -61,9 +61,14 @@ public class ReviewWorkspaceTest {
         scenario.onActivity(a -> {
             View entry = a.findViewById(R.id.rehab_navigation).findViewWithTag("人工复核");
             assertNotNull(entry); entry.performClick();
+            try {
+                Field status = review(a).getClass().getDeclaredField("status"); status.setAccessible(true);
+                assertEquals("Loading must not flash a small status label", View.GONE, ((View) status.get(review(a))).getVisibility());
+            } catch (Exception error) { throw new AssertionError(error); }
         });
         waitFor(scenario, "document.getElementById('reviewPanels') && !document.getElementById('reviewPanels').hidden && document.querySelectorAll('.event-card').length===3");
         waitFor(scenario, "document.getElementById('clipPlayer').readyState>=2 && document.getElementById('clipPlayer').videoWidth>0");
+        waitFor(scenario, "window.__rehabNativeLoginState==='ready'");
     }
 
     private void assertExited(ActivityScenario<HomeActivity> scenario) {
@@ -99,6 +104,63 @@ public class ReviewWorkspaceTest {
         try (FileOutputStream output = new FileOutputStream(new File(folder, name + ".png"))) {
             assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, output));
         } finally { image.recycle(); }
+    }
+
+    @Test public void embeddedQueueNavigationAcrossBatchesAndUnsavedCancel() throws Exception {
+        String base = InstrumentationRegistry.getArguments().getString("reviewFixture");
+        assumeTrue("http://127.0.0.1:18123".equals(base));
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        SharedPreferences preferences = context.getSharedPreferences("rehab", 0);
+        Map<String, ?> saved = preferences.getAll();
+        OkHttpClient http = new OkHttpClient();
+        try {
+            Request login = new Request.Builder().url(base + "/api/v1/auth/staff-login").post(
+                RequestBody.create(MediaType.parse("application/json"), "{\"username\":\"admin\",\"password\":\"123\"}")).build();
+            try (Response response = http.newCall(login).execute()) {
+                assertTrue(response.isSuccessful());
+                preferences.edit().putString("server_url", base).commit();
+                SessionStore.save(context, new JSONObject(response.body().string()));
+            }
+            try (ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(new Intent(context, HomeActivity.class))) {
+                openReview(scenario);
+                assertEquals("false", js(scenario, "[...document.getElementById('runSelect').options].some(o=>o.textContent.includes('0/0条待复核'))"));
+                assertEquals("51", js(scenario, "document.getElementById('runSelect').options.length"));
+                String first = js(scenario, "document.getElementById('runSelect').value");
+                js(scenario, "document.getElementById('nextPage').click()");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').value!==" + first);
+                js(scenario, "document.getElementById('previousPage').click()");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').value===" + first);
+                js(scenario, "var select=document.getElementById('runSelect');select.selectedIndex=50;select.dispatchEvent(new Event('change'))");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').selectedIndex===50");
+                js(scenario, "document.getElementById('nextPage').click()");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').options.length===3 && document.getElementById('runSelect').selectedIndex===1");
+                js(scenario, "document.getElementById('previousPage').click()");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').options.length===51 && document.getElementById('runSelect').selectedIndex===50");
+                js(scenario, "var patient=document.getElementById('patientFilter');patient.selectedIndex=1;patient.dispatchEvent(new Event('change'))");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').selectedIndex===1 && document.getElementById('previousPage').disabled");
+                js(scenario, "window.rehabShowPage('sheet');document.getElementById('nextPage').click()");
+                waitFor(scenario, "!state.loading && document.getElementById('runSelect').selectedIndex===2");
+                js(scenario, "var goal=document.querySelector('[name=rehab_goals]');goal.value='保留未保存输入';goal.dispatchEvent(new Event('input',{bubbles:true}))");
+                scenario.onActivity(a -> web(a).evaluateJavascript("document.getElementById('previousPage').click()", null));
+                clickDialog("取消");
+                assertEquals("2", js(scenario, "document.getElementById('runSelect').selectedIndex"));
+                assertEquals("\"保留未保存输入\"", js(scenario, "document.querySelector('[name=rehab_goals]').value"));
+                screenshot(context, "review-queue-navigation");
+            }
+        } finally {
+            SharedPreferences.Editor restore = preferences.edit().clear();
+            for (Map.Entry<String, ?> entry : saved.entrySet()) {
+                String key = entry.getKey(); Object value = entry.getValue();
+                if (value instanceof String) restore.putString(key, (String) value);
+                else if (value instanceof Long) restore.putLong(key, (Long) value);
+                else if (value instanceof Boolean) restore.putBoolean(key, (Boolean) value);
+                else if (value instanceof Integer) restore.putInt(key, (Integer) value);
+                else if (value instanceof Float) restore.putFloat(key, (Float) value);
+                else if (value instanceof Set) restore.putStringSet(key, new HashSet<>((Set<String>) value));
+            }
+            assertTrue(restore.commit());
+            http.dispatcher().executorService().shutdown();
+        }
     }
 
     @Test public void embeddedReviewVideoManualSheetAndUnsavedBack() throws Exception {
@@ -182,10 +244,15 @@ public class ReviewWorkspaceTest {
                 assertExited(scenario);
                 openReview(scenario);
                 assertEquals("\"机器人夹具手填\"", js(scenario, "document.querySelector('[name=patient_name]').value"));
+                AtomicReference<Object> cached = new AtomicReference<>();
+                scenario.onActivity(a -> cached.set(review(a)));
+                js(scenario, "window.__reviewReuseProbe='same-document'");
                 androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("返回"))
                     .perform(androidx.test.espresso.action.ViewActions.click());
                 assertExited(scenario);
                 openReview(scenario);
+                scenario.onActivity(a -> assertSame("Clean workspace must reuse its WebView", cached.get(), review(a)));
+                assertEquals("\"same-document\"", js(scenario, "window.__reviewReuseProbe"));
                 scenario.onActivity(HomeActivity::onBackPressed);
                 assertExited(scenario);
             }

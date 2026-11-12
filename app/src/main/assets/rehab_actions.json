@@ -88,5 +88,21 @@
     "framing": "患侧手腕与指尖清晰入镜；健侧手无需入镜。",
     "video_url": "/media/press.mp4",
     "poster_url": "/media/press.jpg"
+  },
+  {
+    "key": "forward_raise",
+    "name": "双手前平举",
+    "cooperation": "双手配合",
+    "counting": "抬至肩高附近，再自然放回；按患侧有效次数达标",
+    "default_target": 10,
+    "steps": [
+      "侧身坐稳，患侧靠近镜头，双臂自然放低。",
+      "双臂向前抬至肩高附近，手肘自然舒展。",
+      "手臂自然放回低位，放下时允许自然屈肘；本版只评价患侧。"
+    ],
+    "framing": "患侧靠近镜头，患侧肩、肘、腕和髋部完整入镜；本版只评价患侧。",
+    "video_url": "/media/forward_raise.mp4",
+    "poster_url": "/media/forward_raise.jpg",
+    "evaluation_scope": "affected_side"
   }
 ]

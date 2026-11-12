@@ -693,6 +693,15 @@ public final class WebRtcClient {
         });
     }
 
+    public void confirmForwardRaise(String displayFacing) {
+        String facing = displayFacing;
+        if (DISPLAY_MIRROR && !"auto".equals(facing)) facing = "left".equals(facing) ? "right" : "left";
+        DataChannel channel = dataChannel;
+        if (channel == null || channel.state() != DataChannel.State.OPEN) return;
+        byte[] bytes = RehabApiClient.object("type", "confirm_setup", "facing", facing).toString().getBytes(StandardCharsets.UTF_8);
+        channel.send(new DataChannel.Buffer(ByteBuffer.wrap(bytes), false));
+    }
+
     public void stopTraining() {
         sendCommand("stop");
     }
